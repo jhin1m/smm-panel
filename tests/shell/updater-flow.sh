@@ -285,6 +285,17 @@ assert_untouched
 assert_maintenance_off
 ok "GET /login khác 200: khôi phục bản cũ"
 
+new_scenario smoke-redirect
+run_in_scenario env SHIM_SMOKE_CODE="302 http://localhost/dashboard" "$ROOT/docker/updater/smm-update" 1.3.3 && fail "/login chuyển hướng lạ mà vẫn báo thành công"
+assert_status failed "/login"
+assert_untouched
+ok "GET /login chuyển hướng không phải /install: khôi phục bản cũ"
+
+new_scenario not-installed
+run_in_scenario env SHIM_SMOKE_CODE="302 https://panel.example.com/install" "$ROOT/docker/updater/smm-update" 1.3.3 || fail "bản chưa chạy wizard (/login → /install) bị coi là lỗi"
+assert_status success
+ok "bản chưa chạy xong wizard: /login → /install vẫn tính là thành công"
+
 # ---------------------------------------------------------------- 8. không tắt được bảo trì
 
 new_scenario off-fails

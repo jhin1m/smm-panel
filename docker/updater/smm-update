@@ -219,11 +219,15 @@ wait_app_healthy() {
 }
 
 smoke_login() {
-    local attempt code
+    local attempt out code location
     for attempt in 1 2 3; do
-        code="$(dc exec -T app curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/login 2> /dev/null || true)"
-        log "GET /login -> ${code:-không có phản hồi}"
+        out="$(dc exec -T app curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:8080/login 2> /dev/null || true)"
+        code="${out%% *}"
+        location="${out#* }"
+        log "GET /login -> ${out:-không có phản hồi}"
         [[ "$code" == "200" ]] && return 0
+        # Bản cài chưa chạy xong wizard: mọi trang chuyển về /install, đó không phải lỗi của bản mới.
+        [[ "$code" == "302" && "$location" == */install ]] && return 0
         sleep "$RETRY_SLEEP"
     done
     return 1
