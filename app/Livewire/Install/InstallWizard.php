@@ -85,6 +85,11 @@ class InstallWizard extends Component
     {
         abort_if(InstallState::isInstalled(), 404);
 
+        // Máy dev (APP_ENV=local) chưa đặt INSTALL_TOKEN: không ai ngoài người chạy máy truy cập được, bỏ qua bước token.
+        if ($this->tokenOptional() && ! $this->isVerified()) {
+            session()->put(self::SESSION_KEY, true);
+        }
+
         // Đổi ngôn ngữ (POST /locale) hay F5 không bắt nhập lại token khi session đã xác thực.
         $this->step = $this->isVerified() ? self::SITE_STEP : self::FIRST_STEP;
         // install.sh in URL /install?token=...: điền sẵn ô token (vẫn phải bấm Tiếp tục để xác thực).
@@ -209,6 +214,15 @@ class InstallWizard extends Component
             'tokenConfigured' => (string) config('app.install_token') !== '',
             'urlMismatch' => $this->step === self::FIRST_STEP ? $this->urlMismatch() : null,
         ])->title(__('install.title'));
+    }
+
+    /**
+     * Token chỉ được bỏ qua ở môi trường local khi chưa cấu hình. Production (install.sh luôn sinh token,
+     * .env.template đặt APP_ENV=production) vẫn bắt buộc: ai mở domain trước không chiếm được quyền admin.
+     */
+    private function tokenOptional(): bool
+    {
+        return app()->environment('local') && (string) config('app.install_token') === '';
     }
 
     private function isVerified(): bool

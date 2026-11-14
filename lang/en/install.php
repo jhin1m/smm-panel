@@ -13,7 +13,7 @@ return [
     'url_mismatch' => 'Note: APP_URL is :configured but you are visiting :actual. Email links and Google login will point to :configured; fix APP_URL in .env if it is wrong. You can still continue the setup.',
     'token' => [
         'intro' => 'Enter the install token (INSTALL_TOKEN) printed by install.sh, or found in the .env file on the server.',
-        'not_configured' => 'No install token is configured. Run install.sh or set INSTALL_TOKEN in .env and restart.',
+        'not_configured' => 'No install token is configured. Run install.sh or set INSTALL_TOKEN in .env and restart (local development: set APP_ENV=local to skip this step).',
         'invalid' => 'The install token is incorrect.',
     ],
     'fields' => [

@@ -13,7 +13,7 @@ return [
     'url_mismatch' => 'Lưu ý: APP_URL đang là :configured nhưng bạn đang truy cập bằng :actual. Link trong email và đăng nhập Google sẽ trỏ về :configured; hãy sửa APP_URL trong .env nếu sai. Bạn vẫn có thể tiếp tục cài đặt.',
     'token' => [
         'intro' => 'Nhập mã cài đặt (INSTALL_TOKEN) do install.sh in ra, hoặc nằm trong file .env trên máy chủ.',
-        'not_configured' => 'Chưa cấu hình mã cài đặt. Hãy chạy install.sh hoặc đặt INSTALL_TOKEN trong .env rồi khởi động lại.',
+        'not_configured' => 'Chưa cấu hình mã cài đặt. Hãy chạy install.sh hoặc đặt INSTALL_TOKEN trong .env rồi khởi động lại (máy dev: đặt APP_ENV=local để bỏ qua bước này).',
         'invalid' => 'Mã cài đặt không đúng.',
     ],
     'fields' => [

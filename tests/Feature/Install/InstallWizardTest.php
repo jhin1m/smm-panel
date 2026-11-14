@@ -65,6 +65,25 @@ it('không cấu hình INSTALL_TOKEN: báo hướng dẫn và không cho qua bư
     expect(session(InstallWizard::SESSION_KEY))->toBeNull();
 });
 
+it('máy dev (APP_ENV=local) chưa đặt INSTALL_TOKEN: bỏ qua bước token, vào thẳng bước 2', function () {
+    config(['app.install_token' => null]);
+    app()->detectEnvironment(fn () => 'local');
+
+    Livewire::test(InstallWizard::class)
+        ->assertSet('step', InstallWizard::SITE_STEP)
+        ->assertDontSee(__('install.token.not_configured'));
+
+    expect(session(InstallWizard::SESSION_KEY))->toBeTrue();
+});
+
+it('APP_ENV=local nhưng đã đặt INSTALL_TOKEN: vẫn phải nhập token', function () {
+    app()->detectEnvironment(fn () => 'local');
+
+    Livewire::test(InstallWizard::class)->assertSet('step', InstallWizard::FIRST_STEP);
+
+    expect(session(InstallWizard::SESSION_KEY))->toBeNull();
+});
+
 it('token sai bị từ chối, đúng thì sang bước 2 và đặt cờ xác thực', function () {
     Livewire::test(InstallWizard::class)
         ->set('token', 'sai')
