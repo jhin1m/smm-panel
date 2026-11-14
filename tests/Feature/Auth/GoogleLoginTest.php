@@ -14,18 +14,18 @@ function fakeGoogleUser(string $email, bool $verified = true, string $id = 'g-12
 }
 
 it('tạo user mới từ Google', function () {
-    fakeGoogleUser('New@Gmail.com');
+    fakeGoogleUser('New@Example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/');
 
-    $u = User::firstWhere('email', 'new@gmail.com');
+    $u = User::firstWhere('email', 'new@example.com');
     expect($u->google_id)->toBe('g-123')->and($u->password)->toBeNull()->and($u->email_verified_at)->not->toBeNull();
     $this->assertAuthenticatedAs($u);
 });
 
 it('ghép vào TK có sẵn đã xác minh khi email Google đã xác minh', function () {
-    $u = User::factory()->create(['email' => 'a@gmail.com']);
-    fakeGoogleUser('a@gmail.com');
+    $u = User::factory()->create(['email' => 'a@example.com']);
+    fakeGoogleUser('a@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/');
 
@@ -34,19 +34,19 @@ it('ghép vào TK có sẵn đã xác minh khi email Google đã xác minh', fun
 });
 
 it('từ chối khi email Google chưa xác minh', function () {
-    User::factory()->create(['email' => 'a@gmail.com']);
-    fakeGoogleUser('a@gmail.com', verified: false);
+    User::factory()->create(['email' => 'a@example.com']);
+    fakeGoogleUser('a@example.com', verified: false);
 
     $this->get('/auth/google/callback')->assertRedirect('/login')->assertSessionHasErrors('email');
 
     $this->assertGuest();
-    expect(User::firstWhere('email', 'a@gmail.com')->google_id)->toBeNull();
+    expect(User::firstWhere('email', 'a@example.com')->google_id)->toBeNull();
 });
 
 it('ghép vào TK local chưa xác minh → vô hiệu mật khẩu, xoá phiên cũ, flash giải thích', function () {
-    $u = User::factory()->unverified()->create(['email' => 'victim@gmail.com']);
+    $u = User::factory()->unverified()->create(['email' => 'victim@example.com']);
     DB::table('sessions')->insert(['id' => 'attacker', 'user_id' => $u->id, 'payload' => '', 'last_activity' => time()]);
-    fakeGoogleUser('victim@gmail.com');
+    fakeGoogleUser('victim@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/')->assertSessionHas('status');
 
@@ -57,16 +57,16 @@ it('ghép vào TK local chưa xác minh → vô hiệu mật khẩu, xoá phiên
 });
 
 it('user bị khoá bị từ chối', function () {
-    User::factory()->locked()->create(['email' => 'l@gmail.com', 'google_id' => null]);
-    fakeGoogleUser('l@gmail.com');
+    User::factory()->locked()->create(['email' => 'l@example.com', 'google_id' => null]);
+    fakeGoogleUser('l@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/login')->assertSessionHasErrors(['email' => 'Tài khoản đã bị khoá.']);
     $this->assertGuest();
 });
 
 it('admin bị từ chối', function () {
-    User::factory()->admin()->create(['email' => 'boss@gmail.com']);
-    fakeGoogleUser('boss@gmail.com');
+    User::factory()->admin()->create(['email' => 'boss@example.com']);
+    fakeGoogleUser('boss@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/login')
         ->assertSessionHasErrors(['email' => 'Quản trị viên đăng nhập tại /admin.']);
@@ -74,8 +74,8 @@ it('admin bị từ chối', function () {
 });
 
 it('admin chưa xác minh email: từ chối mà không đụng mật khẩu / google_id', function () {
-    $admin = User::factory()->admin()->unverified()->create(['email' => 'boss2@gmail.com']);
-    fakeGoogleUser('boss2@gmail.com');
+    $admin = User::factory()->admin()->unverified()->create(['email' => 'boss2@example.com']);
+    fakeGoogleUser('boss2@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/login');
 

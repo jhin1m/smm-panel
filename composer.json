@@ -1,9 +1,9 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "jhin1m/smm-panel",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "description": "Self-hosted SMM panel built with Laravel, Livewire and Filament: VietQR/SePay top-ups, orders, chat and a web updater.",
+    "keywords": ["smm-panel", "laravel", "filament", "livewire", "self-hosted"],
     "license": "MIT",
     "require": {
         "php": "^8.3",

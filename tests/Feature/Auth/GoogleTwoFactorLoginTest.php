@@ -12,10 +12,10 @@ function stubGoogle(string $email, string $id = 'g-2fa'): void
 }
 
 it('TK Google đã bật 2FA → sang challenge, chưa đăng nhập; mã đúng mới vào', function () {
-    $u = User::factory()->create(['email' => 'g@gmail.com']);
+    $u = User::factory()->create(['email' => 'g@example.com']);
     $u->forceFill(['google_id' => 'g-2fa', 'password' => null])->save();
     $secret = enableTwoFactor($u);
-    stubGoogle('g@gmail.com');
+    stubGoogle('g@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/two-factor-challenge');
     $this->assertGuest();
@@ -25,10 +25,10 @@ it('TK Google đã bật 2FA → sang challenge, chưa đăng nhập; mã đúng
 });
 
 it('Google + 2FA giữ hành vi remember như trước (login.remember = true)', function () {
-    $u = User::factory()->create(['email' => 'g@gmail.com']);
+    $u = User::factory()->create(['email' => 'g@example.com']);
     $u->forceFill(['google_id' => 'g-2fa'])->save();
     $secret = enableTwoFactor($u);
-    stubGoogle('g@gmail.com');
+    stubGoogle('g@example.com');
 
     $this->get('/auth/google/callback');
     expect(session('login.remember'))->toBeTrue()->and(session('login.id'))->toBe($u->id);
@@ -38,10 +38,10 @@ it('Google + 2FA giữ hành vi remember như trước (login.remember = true)',
 });
 
 it('Google + 2FA: recovery code vào được', function () {
-    $u = User::factory()->create(['email' => 'g@gmail.com']);
+    $u = User::factory()->create(['email' => 'g@example.com']);
     $u->forceFill(['google_id' => 'g-2fa'])->save();
     enableTwoFactor($u);
-    stubGoogle('g@gmail.com');
+    stubGoogle('g@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/two-factor-challenge');
     $this->post('/two-factor-challenge', ['recovery_code' => 'rc2-aaaaaaaaaa'])->assertRedirect('/');
@@ -50,9 +50,9 @@ it('Google + 2FA: recovery code vào được', function () {
 });
 
 it('TK chưa bật 2FA → vào thẳng như cũ', function () {
-    $u = User::factory()->create(['email' => 'g@gmail.com']);
+    $u = User::factory()->create(['email' => 'g@example.com']);
     $u->forceFill(['google_id' => 'g-2fa'])->save();
-    stubGoogle('g@gmail.com');
+    stubGoogle('g@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/');
 
@@ -60,21 +60,21 @@ it('TK chưa bật 2FA → vào thẳng như cũ', function () {
 });
 
 it('TK mới chưa xác nhận 2FA (chỉ có secret) → vào thẳng', function () {
-    $u = User::factory()->create(['email' => 'g@gmail.com']);
+    $u = User::factory()->create(['email' => 'g@example.com']);
     $u->forceFill(['google_id' => 'g-2fa'])->save();
     enableTwoFactor($u);
     $u->forceFill(['two_factor_confirmed_at' => null])->save();
-    stubGoogle('g@gmail.com');
+    stubGoogle('g@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/');
     $this->assertAuthenticatedAs($u);
 });
 
 it('admin vẫn bị từ chối ở Google callback dù có cột 2FA', function () {
-    $admin = User::factory()->admin()->create(['email' => 'a@gmail.com']);
+    $admin = User::factory()->admin()->create(['email' => 'a@example.com']);
     $admin->forceFill(['google_id' => 'g-2fa'])->save();
     enableTwoFactor($admin);
-    stubGoogle('a@gmail.com');
+    stubGoogle('a@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/login')->assertSessionHasErrors('email');
 
@@ -83,10 +83,10 @@ it('admin vẫn bị từ chối ở Google callback dù có cột 2FA', functio
 });
 
 it('TK khoá bị từ chối trước khi tới challenge', function () {
-    $u = User::factory()->locked()->create(['email' => 'l@gmail.com']);
+    $u = User::factory()->locked()->create(['email' => 'l@example.com']);
     $u->forceFill(['google_id' => 'g-2fa'])->save();
     enableTwoFactor($u);
-    stubGoogle('l@gmail.com');
+    stubGoogle('l@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/login')->assertSessionHasErrors('email');
 
@@ -94,10 +94,10 @@ it('TK khoá bị từ chối trước khi tới challenge', function () {
 });
 
 it('TK đăng ký mật khẩu chưa xác minh + đã bật 2FA → chủ email login Google: xoá 2FA và vào được', function () {
-    $victim = User::factory()->unverified()->create(['email' => 'victim@gmail.com']);
+    $victim = User::factory()->unverified()->create(['email' => 'victim@example.com']);
     enableTwoFactor($victim);
     DB::table('sessions')->insert(['id' => 'attacker', 'user_id' => $victim->id, 'payload' => '', 'last_activity' => time()]);
-    stubGoogle('victim@gmail.com');
+    stubGoogle('victim@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/');
 
@@ -111,9 +111,9 @@ it('TK đăng ký mật khẩu chưa xác minh + đã bật 2FA → chủ email 
 });
 
 it('TK đã xác minh email ghép Google giữ nguyên 2FA và vẫn bị hỏi mã', function () {
-    $u = User::factory()->create(['email' => 'v@gmail.com']);
+    $u = User::factory()->create(['email' => 'v@example.com']);
     enableTwoFactor($u);
-    stubGoogle('v@gmail.com');
+    stubGoogle('v@example.com');
 
     $this->get('/auth/google/callback')->assertRedirect('/two-factor-challenge');
 

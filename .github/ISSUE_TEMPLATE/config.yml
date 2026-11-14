@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Báo lỗ hổng bảo mật / Report a vulnerability
+    url: https://github.com/jhin1m/smm-panel/security/advisories/new
+    about: Không mở issue công khai cho lỗi bảo mật. Báo riêng tư qua GitHub Security Advisories. / Do not open a public issue for security problems.

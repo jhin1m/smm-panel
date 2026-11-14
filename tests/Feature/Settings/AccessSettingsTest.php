@@ -53,17 +53,17 @@ it('CreateNewUser từ chối tạo TK khi tắt đăng ký', function () {
 it('tắt đăng ký → Google không tạo TK mới', function () {
     setAccess(['registration_enabled' => false]);
 
-    stubGoogleCallback('brandnew@gmail.com');
+    stubGoogleCallback('brandnew@example.com');
     $this->get('/auth/google/callback')->assertRedirect('/login')->assertSessionHasErrors('email');
-    expect(User::where('email', 'brandnew@gmail.com')->exists())->toBeFalse();
+    expect(User::where('email', 'brandnew@example.com')->exists())->toBeFalse();
 
 });
 
 it('tắt đăng ký → Google vẫn đăng nhập TK có sẵn', function () {
     setAccess(['registration_enabled' => false]);
-    $existing = User::factory()->create(['email' => 'old@gmail.com']);
+    $existing = User::factory()->create(['email' => 'old@example.com']);
 
-    stubGoogleCallback('old@gmail.com');
+    stubGoogleCallback('old@example.com');
     $this->get('/auth/google/callback')->assertRedirect('/');
     $this->assertAuthenticatedAs($existing);
 });

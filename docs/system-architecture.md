@@ -1,14 +1,14 @@
 # Kiến trúc hệ thống — SMM Panel
 
-Trạng thái: giai đoạn 1 đã triển khai code · Cập nhật: 2026-11-14. Vận hành: [deployment.md](./deployment.md) · Quyết định công nghệ: [tech-stack.md](./tech-stack.md) · Cây thư mục: [codebase-summary.md](./codebase-summary.md).
+Cập nhật: 2026-11-14. Vận hành: [deployment.md](./deployment.md) · Quyết định công nghệ: [tech-stack.md](./tech-stack.md) · Cây thư mục: [codebase-summary.md](./codebase-summary.md).
 
 ## 1. Thành phần
 
 | Thành phần | Công nghệ / vị trí | Ghi chú |
 |---|---|---|
-| Trang khách | Livewire 4 + Blade: `CustomerDashboard` (`/`), `PlaceOrder` (`/dat-don`), `MyOrders` (`/don-hang`), `Deposit` (`/nap-tien`), `ChatWidget` | Route trong `routes/web.php`, nhóm `auth`. `MyOrders` poll 30s, chat poll 5s (mở) / 20s (đóng), đều `.visible` |
-| Auth khách | Fortify (route tự khai, `Fortify::ignoreRoutes()`) + Socialite Google | Limiter riêng: `login` 5/phút (email+IP), `register` 5, `forgot` 3, `oauth` 10 (theo IP) |
-| Admin | Filament 5, path `/admin`, `AdminPanelProvider` | Resource/Page tự phát hiện trong `app/Filament`; MFA TOTP bắt buộc; chỉ sáng |
+| Trang khách | Livewire 4 + Blade: `CustomerDashboard` (`/`), `PlaceOrder` (`/dat-don`), `MyOrders` (`/don-hang`), `Deposit` (`/nap-tien`), `AccountSecurity` (`/bao-mat`, 2FA khách), `ChatWidget` | Route trong `routes/web.php`, nhóm `auth`. `MyOrders` poll 30s, chat poll 5s (mở) / 20s (đóng), đều `.visible` |
+| Auth khách | Fortify (route tự khai, `Fortify::ignoreRoutes()`) + Socialite Google | Limiter riêng: `login` 5/phút (email+IP), `two-factor` 5 (theo phiên đăng nhập dở hoặc IP), `register` 5, `forgot` 3, `oauth` 10 (theo IP). Xem 2.2 về 2FA |
+| Admin | Filament 5, path `/admin`, `AdminPanelProvider` | Resource/Page tự phát hiện trong `app/Filament`; MFA TOTP bắt buộc; chỉ sáng. Trang Cài đặt: `ManageGeneralSettings`, `ManageAccessSettings`, `ManageAppearanceSettings`, `ManageIntegrationSettings`, `ManageDepositSettings`, `ManageTierSettings`, `ManageTelegramSettings`, `ManageUpdates` |
 | Webhook | `routes/webhooks.php` → `SepayWebhookController`, middleware `VerifySepaySignature` | Ngoài nhóm `web` (không session/CSRF), `throttle:120,1` |
 | Queue | Driver `database`, container `queue` (`queue:work`) | Hiện chỉ job `SendTelegramMessage` |
 | Scheduler | Container `scheduler` (`schedule:work`), `routes/console.php` | `app:sepay-reconcile` mỗi 10 phút; `queue:prune-failed --hours=168` hằng ngày; `auth:clear-resets` mỗi 15 phút |
@@ -17,6 +17,10 @@ Trạng thái: giai đoạn 1 đã triển khai code · Cập nhật: 2026-11-14
 | Cấu hình runtime | `App\Support\RuntimeConfig::apply()` đầu `AppServiceProvider::boot()` | Đè `config()` từ nhóm settings `general`/`integrations` mỗi request/job (xem 2.1). Bỏ qua trong `migrate*`, `config:cache|clear`, `optimize*`, `package:discover`, `settings:*`, `filament:upgrade` |
 | Cổng tính năng | Middleware `ensure.feature:registration|google_login`, `customer.maintenance` | Route khai tĩnh (tương thích `route:cache`); tắt đăng ký/Google → 404; bảo trì → 503 chỉ trang khách (không gồm `/admin`, webhook, `/up`) |
 | Cài đặt lần đầu | `EnsureInstalled` (nhóm `web` + middleware panel `/admin`), wizard `App\Livewire\Install\InstallWizard` tại `/install`, `App\Support\InstallState`, settings `install.installed_at` | Chưa cài → mọi route web + `/admin` về `/install` (ngoại lệ: `install`, `default-livewire.update`, `livewire.*`, `locale.update`, `/up`, `/webhooks/*`). Cờ đọc thẳng DB mỗi request. Wizard đòi `INSTALL_TOKEN` (`hash_equals`), `finish()` trong transaction + `pg_advisory_xact_lock`; đã cài → `/install` và mọi action Livewire của wizard 404. Migration tự đánh dấu đã cài nếu đã có admin |
+| Đa ngôn ngữ | `SetLocale` (nhóm `web`), `App\Support\Locales`, `LocaleController` (`POST /locale`) | Locale = thư mục con của `lang/` (và `custom/lang/`) có `meta.php` với `name`. Thứ tự chọn: `users.locale` → session → `config('app.default_locale')`. `lang/vi` và `lang/en` phải trùng tập key (`TranslationParityTest`) |
+| Tùy biến `custom/` | `App\Support\CustomOverrides::register()`, `config('app.custom_path')` (`CUSTOM_PATH`, mặc định `custom/`) | Có thư mục thì `custom/views` được thêm trước `resources/views` (kể cả namespace component ẩn danh/Livewire), `custom/lang` nạp sau `lang/`, `custom/public` phục vụ tại `/custom/*`. Container mount chỉ đọc. Xem 7 |
+| Cập nhật | `UpdateService`, trang `ManageUpdates`, `config/updates.php`, container `updater` (`docker/updater/`) | App chỉ gửi chuỗi version; updater làm phần còn lại. Xem 8 |
+| Health sâu | `App\Listeners\DeepHealthCheck` (sự kiện `DiagnosingHealth` của `/up`) | Kiểm DB, đọc settings, render view đăng nhập **lõi** (bỏ qua `custom/views`) |
 | Giao diện khách | `App\Support\Branding` + component `theme-head`/`theme-body` | In màu chính, favicon, custom CSS/head/body CHỈ khi người xem không phải admin (cùng origin + cookie với `/admin`) |
 
 ```mermaid
@@ -38,7 +42,7 @@ Tiền: số nguyên VND (`bigInteger`), không có số thực.
 
 | Bảng | Cột / ràng buộc chính |
 |---|---|
-| `users` | `balance`, `total_deposited` (CHECK `>= 0`); `tier` (CHECK `member`/`agency`), `tier_manual`, `tier_changed_at`; `deposit_code` (unique, NOT NULL, dạng `BP` + 6 ký tự); `google_id` (unique), `password` nullable; `is_admin`, `locked_at`; `app_authentication_secret`, `app_authentication_recovery_codes` (MFA) |
+| `users` | `balance`, `total_deposited` (CHECK `>= 0`); `tier` (CHECK `member`/`agency`), `tier_manual`, `tier_changed_at`; `deposit_code` (unique, NOT NULL, dạng `BP` + 6 ký tự); `google_id` (unique), `password` nullable; `is_admin`, `locked_at`; `locale` (nullable); `app_authentication_secret`, `app_authentication_recovery_codes` (MFA admin); `two_factor_secret`, `two_factor_recovery_codes` (mã hoá), `two_factor_confirmed_at` (2FA khách) |
 | `wallet_transactions` | Sổ cái **append-only**: trigger `wallet_tx_no_update_delete` chặn UPDATE/DELETE. `amount` có dấu (CHECK `<> 0`), `balance_after` (CHECK `>= 0`), `idempotency_key` **unique**, `type` CHECK (`topup`, `bonus`, `order`, `refund`, `adjust`, `topup_reversal`, `bonus_reversal`), `reference` morph, `created_by` |
 | `categories` | Nền tảng: `name`, `slug` unique, `badge`, `color`, `sort_order`, `is_active` |
 | `services` | `category_id`, `unit` (`per_1000`/`per_unit`), `price`, `min_quantity`, `max_quantity`, `speed`, `start_time`, `is_active`, `sort_order` |
@@ -47,7 +51,7 @@ Tiền: số nguyên VND (`bigInteger`), không có số thực.
 | `chat_threads` / `chat_messages` | Mỗi khách đúng 1 thread (`user_id` unique); `customer_last_read_id`, `admin_last_read_id`, `admin_notified_at`; tin có `sender_type` CHECK (`customer`/`admin`) |
 | `notices` | Thông báo bảng điều khiển khách: `title`, `body` (chữ thuần), `is_published`, `published_at` |
 | `admin_audit_logs` | `admin_id`, `action`, `subject` morph, `changes` jsonb (`before`/`after`), `ip`, `created_at` |
-| `settings` | spatie/laravel-settings, 7 nhóm: `general` (tên site, logo, favicon, liên hệ, locale mặc định, SEO), `access` (đăng ký, Google, 2FA khách, bảo trì), `appearance` (màu chính, custom CSS/HTML), `integrations` (SMTP, Google, SePay; `smtp_password`, `google_client_secret`, `sepay_webhook_secret`, `sepay_api_token` mã hoá), `deposit` (BIN, tên NH, STK, tên TK, `bonus_rules`), `tier` (`agency_threshold`, `agency_discount_percent`, `member_discount_percent`), `telegram` (`enabled`, `bot_token` mã hoá, `chat_id`) |
+| `settings` | spatie/laravel-settings, 8 nhóm (7 nhóm cấu hình + `install`): `general` (tên site, logo, favicon, liên hệ, locale mặc định, SEO), `access` (đăng ký, Google, `customer_2fa_enabled`, bảo trì + thông điệp), `appearance` (màu chính, custom CSS/HTML), `integrations` (SMTP, Google, SePay; `smtp_password`, `google_client_secret`, `sepay_webhook_secret`, `sepay_api_token` mã hoá), `deposit` (BIN, tên NH, STK, tên TK, `bonus_rules`), `tier` (`agency_threshold`, `agency_discount_percent`, `member_discount_percent`), `telegram` (`enabled`, `bot_token` mã hoá, `chat_id`), `install` (`installed_at`) |
 | `cache`, `jobs`, `sessions`... | Driver `database` cho cache/queue/session |
 
 ### 2.1 Quy ước settings
@@ -56,7 +60,12 @@ Tiền: số nguyên VND (`bigInteger`), không có số thực.
 - Settings migration của nhóm tích hợp **không seed từ `.env`**: DB rỗng = `.env` áp dụng. Chỉ seed giá trị không nhạy cảm (`site_name`, `default_locale`).
 - Thứ tự ưu tiên: DB (khác rỗng) > `.env`. Settings cache của spatie giữ tắt (`SETTINGS_CACHE_ENABLED` không đặt): cache không TTL, không tự xoá khi migrate; 4 truy vấn PK/request là rẻ.
 - Locale mặc định của site ở `config('app.default_locale')` (không dùng `app.locale`, vì `setLocale()` ghi đè nó theo từng request).
+- Cấu hình runtime: `RuntimeConfig::apply()` chép giá trị khác rỗng của nhóm `general`/`integrations` vào `config()` ở mỗi request/job; không ghi ra `config:cache`. Đổi tích hợp trong admin chạy `queue:restart`.
 - Mỗi settings class mới nên có test kiểu `SettingsUpgradeTest`: xoá dòng của nhóm, đọc + `artisan migrate` vẫn chạy.
+
+### 2.2 2FA khách
+
+Dùng action của Fortify (`Enable/Confirm/DisableTwoFactorAuthentication`, `GenerateNewRecoveryCodes`) trực tiếp từ Livewire `AccountSecurity`; **không** khai route quản lý 2FA của Fortify. Chỉ khai `GET/POST /two-factor-challenge` (limiter `two-factor`). Đăng nhập mật khẩu hoặc Google đúng mà tài khoản đã bật 2FA thì phiên chỉ giữ `login.id`, chưa đăng nhập, cho tới khi nhập đúng mã TOTP/recovery code. Công tắc `access.customer_2fa_enabled` chỉ chặn việc **bật mới**; tắt và tạo lại recovery code luôn được phép và đòi mã TOTP hiện tại hoặc một recovery code (không dùng mật khẩu vì tài khoản Google không có). Admin không dùng trang này (403): admin có MFA riêng của Filament.
 
 ## 3. Dòng tiền
 
@@ -113,6 +122,7 @@ Gán tay / huỷ gán:
 | Truy vấn | `MyOrders`/`Deposit` luôn lọc theo `auth()->id()`; không có `OrderPolicy` (YAGNI) |
 | Sổ cái | Trigger append-only, CHECK không âm, idempotency key unique, `SELECT … FOR UPDATE` |
 | Audit | `AuditLog::record` ghi `admin_audit_logs` (admin, hành động, đối tượng, before/after, IP) cho gán/huỷ gán/bỏ qua/nhập tay giao dịch, điều chỉnh số dư, khoá/mở khoá, đổi cài đặt (`AuditsSettingsChanges`) |
+| 2FA/MFA | Admin: MFA TOTP bắt buộc + recovery code. Khách: TOTP tuỳ chọn, giới hạn thử 5 lần/phút; secret và recovery code mã hoá bằng `APP_KEY` |
 | Cài đặt nhạy cảm | `bot_token`, `smtp_password`, `google_client_secret`, `sepay_webhook_secret`, `sepay_api_token` mã hoá trong `settings`, không vào `config:cache`; audit chỉ ghi "đã đổi"; `APP_KEY` mã hoá cả secret MFA |
 
 ## 6. Phụ thuộc ngoài
@@ -124,3 +134,24 @@ Gán tay / huỷ gán:
 | `img.vietqr.io` | Ảnh QR (`App\Support\VietQr`) | Từ `DepositSettings` |
 | Telegram Bot API | Báo admin | `TelegramSettings` (trang Telegram trong admin) |
 | Google OAuth, SMTP | Đăng nhập Google, quên mật khẩu | `GOOGLE_*`, `MAIL_*` |
+
+## 7. Thư mục `custom/` và phạm vi tin cậy
+
+`custom/` nằm cạnh `compose.yml` trên host, mount **chỉ đọc** vào `app`, `queue`, `scheduler` (nội dung ngoài git, không bị đụng khi cập nhật). Người vận hành được tin cậy: view Blade là mã PHP chạy trong app. Mount chỉ đọc để một app bị chiếm quyền không ghi thêm PHP vào đây. CSS/HTML tuỳ chỉnh trong Cài đặt → Giao diện cũng do admin tin cậy và chỉ được in cho người xem không phải admin (tránh chạy script cùng origin với `/admin`). Hướng dẫn người dùng: [customization.md](./customization.md).
+
+## 8. Cập nhật và ranh giới tin cậy của updater
+
+```mermaid
+flowchart LR
+  AD[Admin] -->|nút Cập nhật| APP[app]
+  APP -->|ghi inbox/request.json: chỉ chuỗi version| VOL[(volume updates)]
+  VOL -->|đọc request, heartbeat 5 giây| UPD[updater + docker.sock]
+  UPD -->|status.json, history.jsonl, heartbeat| VOL
+  UPD -->|tải bundle + sha256sum -c| GH[GitHub Release]
+  UPD -->|pull, up -d, rollback| DK[Docker host]
+```
+
+- `UpdateService` (phía app) chỉ đọc trạng thái do updater ghi và ghi `inbox/request.json`; **không chạm docker**. Thư mục gốc của volume thuộc root, app chỉ ghi được `inbox/`. Gửi yêu cầu bị từ chối nếu version không đúng semver/không mới hơn, updater offline (heartbeat cũ hơn `stale_after` = 60 giây) hoặc đang có lần chạy khác.
+- Container `updater` giữ `docker.sock` (tương đương root host) nên bị khoá chặt: image ghim digest từ `release.json`, repo release đóng cứng trong image (không đọc từ `.env`), không mở cổng, không dùng chung `env_file` với app, `.env` không mount vào app. Updater tự kiểm lại mọi điều kiện, không tin app ngoài chuỗi version.
+- Mỗi lần cập nhật: kiểm version → tải bundle + checksum → bật bảo trì khách → backup DB (`pre-update/`) → lưu cấu hình cũ → đổi bundle → `pull` + `up -d` các service trừ `updater` → chờ `app` healthy → tắt bảo trì → `queue:restart`; lỗi thì khôi phục cấu hình cũ và ghi `failed`. Có giới hạn thời gian tổng (`UPDATER_TIMEOUT`, mặc định 1200 giây) và phục hồi khi updater bị ngắt. Chi tiết từng bước và rollback tay: [deployment.md](./deployment.md).
+- Image updater không tự cập nhật từ web: đổi `docker/updater/*` chỉ có hiệu lực sau khi chạy `./update.sh` trên máy chủ.

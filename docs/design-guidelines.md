@@ -1,6 +1,6 @@
 # Design Guidelines
 
-Nguồn: `docs/mockup/be-phong-panel.html` (mockup đã duyệt). Chỉ theme sáng — bỏ toàn bộ khối dark mode của mockup.
+Chỉ theme sáng, không có dark mode.
 
 ## Token
 
