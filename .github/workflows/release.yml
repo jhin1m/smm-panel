@@ -40,11 +40,16 @@ jobs:
           {
             echo "version=$version"
             echo "image=$image"
+            echo "updater_image=${image}-updater"
             echo "prerelease=$prerelease"
             echo "tags<<EOF"
             echo "$image:$version"
             # :latest chỉ đổi theo bản ổn định, bản rc không bao giờ đụng tới.
             [[ "$prerelease" == false ]] && echo "$image:latest"
+            echo "EOF"
+            echo "updater_tags<<EOF"
+            echo "$image-updater:$version"
+            [[ "$prerelease" == false ]] && echo "$image-updater:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -75,23 +80,47 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Image updater giữ docker.sock trên máy người dùng. Repo phát hành được đóng cứng vào image lúc build
+      # (RELEASE_REPO), không đọc từ .env, nên app bị chiếm quyền cũng không đổi được nguồn tải bản cập nhật.
+      - name: Build và push image updater
+        id: build_updater
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/updater
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.updater_tags }}
+          build-args: |
+            RELEASE_REPO=${{ github.repository }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=updater
+          cache-to: type=gha,mode=max,scope=updater
+
       # Package GHCR mới tạo mặc định là private; người cài không đăng nhập thì pull không được.
       # Dừng ở đây (trước khi tạo Release) để sửa visibility rồi chạy lại job.
       - name: Kiểm image pull được khi không đăng nhập
         env:
-          IMAGE_REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          APP_REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          UPDATER_REF: ${{ steps.meta.outputs.updater_image }}@${{ steps.build_updater.outputs.digest }}
         run: |
           docker logout ghcr.io
-          if ! docker manifest inspect "$IMAGE_REF" > /dev/null; then
-            echo "::error::Không pull được $IMAGE_REF khi chưa đăng nhập. Đặt package thành Public (Package settings → Danger Zone → Change visibility) rồi chạy lại job."
-            exit 1
-          fi
+          for ref in "$APP_REF" "$UPDATER_REF"; do
+            if ! docker manifest inspect "$ref" > /dev/null; then
+              echo "::error::Không pull được $ref khi chưa đăng nhập. Đặt package thành Public (Package settings → Danger Zone → Change visibility) rồi chạy lại job."
+              exit 1
+            fi
+          done
 
       - name: Dựng bundle (tarball, release.json, install.sh, checksums.txt)
         env:
           TAG: ${{ github.ref_name }}
-          IMAGE_REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
-        run: deploy/build-bundle.sh "$TAG" "$IMAGE_REF" dist
+          APP_REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          UPDATER_REF: ${{ steps.meta.outputs.updater_image }}@${{ steps.build_updater.outputs.digest }}
+        run: deploy/build-bundle.sh "$TAG" "$APP_REF" "$UPDATER_REF" dist
 
       - name: Tạo Release
         env:

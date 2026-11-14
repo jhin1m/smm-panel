@@ -1,8 +1,10 @@
 <?php
 
 use App\Settings\GeneralSettings;
+use App\Support\CustomOverrides;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\View;
+use Illuminate\Support\ViewErrorBag;
 
 beforeEach(function () {
     // Manifest Vite chỉ có trong image đã build; test không dựng asset.
@@ -42,7 +44,8 @@ it('/up trả 500 khi không đọc được settings', function () {
 });
 
 it('/up trả 500 khi view đăng nhập lỗi', function () {
-    View::composer('auth.login', fn () => throw new RuntimeException('view broken'));
+    // Thành phần con của view đăng nhập lõi (include) lỗi biên dịch/render.
+    View::composer('auth._tabs', fn () => throw new RuntimeException('view broken'));
 
     $this->get('/up')->assertServerError();
 });
@@ -52,4 +55,19 @@ it('/up trả 500 khi bảng settings không đọc được', function () {
     DB::statement('alter table settings rename to settings_broken');
 
     $this->get('/up')->assertServerError();
+});
+
+it('/up vẫn 200 khi view tuỳ biến trong custom/ bị lỗi (đăng nhập, layout, include, component)', function () {
+    config(['app.custom_path' => base_path('tests/Fixtures/custom-broken')]);
+    CustomOverrides::register();
+
+    // Xác nhận fixture thật sự thắng bản lõi ở render thường; chỉ health bỏ qua nó.
+    expect(fn () => view('auth.login')->with('errors', new ViewErrorBag)->render())
+        ->toThrow(Exception::class, 'custom view broken');
+
+    $this->get('/up')->assertOk();
+
+    // Sau health, view tuỳ biến vẫn có hiệu lực cho request thường.
+    expect(fn () => view('auth.login')->with('errors', new ViewErrorBag)->render())
+        ->toThrow(Exception::class, 'custom view broken');
 });

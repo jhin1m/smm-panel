@@ -42,3 +42,9 @@ ENV PHP_OPCACHE_ENABLE=1 \
 # Phiên bản chạy thật nằm trong image (config('app.version') đọc file này); CI truyền tag release, build tay là "dev".
 ARG APP_VERSION=dev
 RUN printf '%s\n' "$APP_VERSION" > /var/www/html/VERSION
+
+# Thư mục trao đổi với container updater (volume `updates` thừa hưởng bố cục này khi tạo lần đầu): gốc thuộc root (chỉ updater
+# ghi status/heartbeat), app chỉ ghi được inbox/request.json. Image updater có cùng bố cục, nên container nào mount trước cũng vậy.
+USER root
+RUN mkdir -p /updates/inbox && chown www-data:www-data /updates/inbox
+USER www-data

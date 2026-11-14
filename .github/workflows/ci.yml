@@ -67,10 +67,14 @@ jobs:
           $run vendor/bin/pint --test
 
       - name: ShellCheck
-        run: find deploy docker tests/shell -name '*.sh' -print0 | xargs -0 shellcheck
+        # Script updater không có đuôi .sh nên liệt kê tường minh.
+        run: find deploy docker tests/shell -name '*.sh' -print0 | xargs -0 shellcheck docker/updater/smm-update docker/updater/smm-updater-loop
 
       - name: Bundle release khớp install.sh
         run: tests/shell/bundle-install-contract.sh
+
+      - name: Luồng cập nhật (updater, update.sh) với docker giả
+        run: tests/shell/updater-flow.sh
 
   secrets:
     name: Secrets (gitleaks)

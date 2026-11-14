@@ -138,6 +138,45 @@ docker compose exec app php artisan queue:restart
 
 Trạng thái bảo trì lưu ở cache DB (`APP_MAINTENANCE_DRIVER=cache`, `APP_MAINTENANCE_STORE=database`) nên vẫn giữ khi container được tạo lại.
 
+### 4a. Cập nhật instance cài từ release
+
+Nguồn cập nhật là Release trên GitHub (`jhin1m/smm-panel`); mỗi bản gồm image app + image updater ghim digest và bundle cấu hình (`compose.yml`, `docker/`, `update.sh`) đã kiểm checksum. **Không có `artisan down`**: chỉ trang khách bảo trì tạm (`app:customer-maintenance`), `/admin`, webhook SePay và `/up` vẫn chạy.
+
+**Cách 1: nút trong admin.** `/admin` → Cài đặt → **Cập nhật**: thấy phiên bản đang chạy, bản mới nhất + changelog, trạng thái updater, rồi bấm "Cập nhật lên X". Trang tự làm mới 3 giây/lần, hiện bước đang chạy và lịch sử. Bản `-rc.N` chỉ hiện khi `.env` có `UPDATER_ALLOW_PRERELEASE=true` (chỉ nên bật ở môi trường thử). Nút bị khoá khi updater không phản hồi (heartbeat cũ hơn 60 giây) hoặc đang có lần chạy khác.
+
+**Cách 2: `update.sh` trên máy chủ** (dùng khi updater trong web lỗi, hoặc để đổi chính image updater, việc nút admin không tự làm):
+
+```bash
+cd /opt/smm-panel            # thư mục cài (INSTALL_DIR)
+./update.sh                  # lên bản ổn định mới nhất
+./update.sh 1.3.0            # hoặc đúng một phiên bản
+```
+
+`update.sh` tải `release.json` bản đích (kiểm checksum), đặt `UPDATER_IMAGE` theo digest trong đó, rồi chạy cùng logic với nút admin (`smm-update` trong image updater mới) và cuối cùng `up -d updater`. Nếu updater trong web đang chạy một lần cập nhật (trạng thái `running` với heartbeat còn mới) hoặc có yêu cầu đang chờ nhận, `update.sh` dừng ngay với thông báo và mã thoát khác 0, không đổi gì (vì `up -d updater` sẽ recreate container giữa chừng); đợi lần đó xong rồi chạy lại.
+
+Mỗi lần cập nhật (cả hai cách) làm tuần tự: kiểm version (đúng semver, mới hơn bản đang chạy) → tải bundle + `sha256sum -c` → bật bảo trì khách → **backup DB vào `$BACKUP_DIR/pre-update/`** (giữ 5 bản gần nhất, tách khỏi `hourly/`) → lưu `compose.yml`/`.env`/`docker/` hiện tại vào `.update-saved/` → đổi bundle (không đụng `.env`, `custom/`) và đặt `APP_VERSION`, `APP_IMAGE` → `pull` + `up -d` **mọi service trong `compose.yml` của bản đích trừ `updater`** (lấy bằng `docker compose config --services`, nên service mới của release cũng được khởi động) → chờ `app` healthy (≤ 5 phút, health sâu: DB, settings, render `/login`) → tắt bảo trì, kiểm `GET /login` = 200 → `queue:restart`. Lỗi ở bất kỳ bước nào sau khi đổi bundle: khôi phục `compose.yml`/`.env`/`docker/` đã lưu, `up -d` lại bản cũ, ghi trạng thái `failed` + lý do, báo Telegram. Bảo trì khách luôn được tắt khi kết thúc, kể cả khi lỗi. Mỗi lần chạy có **giới hạn thời gian tổng 20 phút** (đổi bằng `UPDATER_TIMEOUT=<giây>` trong `.env`, áp dụng sau `docker compose up -d updater`): quá giờ thì updater dừng lần chạy, khôi phục bản cũ nếu đã đổi bundle và ghi `failed` với lý do "Quá thời gian tối đa". Dù smm-update kết thúc kiểu gì (kể cả bị OOM/`kill -9`), updater luôn chạy bước phục hồi ngay sau đó nên trạng thái không bao giờ kẹt ở `running`. Updater bị ngắt giữa chừng (`docker kill`, mất điện) thì lần khởi động kế tiếp tự khôi phục và ghi `failed (interrupted)`.
+
+Điều kiện: `.env` có `UPDATER_IMAGE`, `INSTALL_DIR`, `BACKUP_DIR` (install.sh ghi sẵn); instance cũ phải thêm các dòng này trước khi dùng bản có updater (xem `.env.template`).
+
+**`APP_VERSION` bắt buộc.** `.env` phải có `APP_VERSION=vX.Y.Z` (hoặc `vX.Y.Z-rc.N`) đúng với bản đang chạy. Thiếu hoặc sai định dạng thì updater từ chối (`failed`, lý do nêu rõ) thay vì coi là `0.0.0`, vì không biết bản đích mới hơn hay là hạ cấp. Instance chuyển tay từ bản cũ hoặc tự build từ source **phải đặt `APP_VERSION` trước khi dùng nút Cập nhật hoặc `update.sh`**.
+
+**Health `/up` và `custom/`.** `/up` kiểm view đăng nhập **lõi**: finder tạm thời bỏ mọi đường dẫn thuộc `custom/views` (view, layout, include, component ẩn danh và Livewire phân giải qua finder), nên view tuỳ biến lỗi không làm container unhealthy hay chặn cập nhật. Không bị bỏ qua: `custom/lang` (không ảnh hưởng việc biên dịch view). Hệ quả: view tuỳ biến hỏng không bị phát hiện ở bước health, hãy tự kiểm `/login` sau khi sửa `custom/`. Updater **không mở cổng nào** và chỉ tải từ repo đóng cứng trong image của nó; app chỉ gửi cho updater một chuỗi version.
+
+**Rollback tay từ `pre-update/`** (chỉ khi updater không tự phục hồi được, hoặc bản mới chạy được nhưng sai nghiệp vụ):
+
+```bash
+cd /opt/smm-panel
+ls -t /srv/backups/smm-panel/pre-update/            # smm-<từ>-to-<đến>-<thời điểm>.dump
+# .update-saved/ chỉ còn khi khôi phục tự động thất bại; có thì chép lại bản đã lưu:
+test -f .update-saved/.complete && cp -a .update-saved/compose.yml .update-saved/.env . && cp -a .update-saved/docker/. docker/
+# Không còn: tải tarball bundle của bản cũ từ trang Release, giải nén vào thư mục cài (không đè .env, custom/),
+# rồi đặt lại APP_VERSION/APP_IMAGE cũ trong .env (digest ghi trong release.json của bản đó).
+docker compose up -d app queue scheduler caddy
+docker compose exec app php artisan app:customer-maintenance off      # nếu site còn kẹt bảo trì
+```
+
+Restore dump `pre-update` chỉ khi bản lỗi chưa phục vụ request nào kể từ lúc dump; làm theo mục 5 (kể cả `app:sepay-reconcile --from=<thời điểm dump>`).
+
 ## 5. Rollback
 
 1. **Ưu tiên sửa tiến**: vá lỗi, deploy bản mới.

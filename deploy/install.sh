@@ -319,10 +319,7 @@ download_bundle() {
     APP_IMAGE="$(release_json_get "$out/release.json" app_image)"
     UPDATER_IMAGE="$(release_json_get "$out/release.json" updater_image)"
     valid_image_ref "$APP_IMAGE" || die "release.json: app_image thiếu hoặc không ghim theo digest ('${APP_IMAGE}')."
-    # updater_image tuỳ chọn (bản phát hành chưa có tính năng cập nhật qua web thì không có); nếu có thì phải ghim digest.
-    if [[ -n "$UPDATER_IMAGE" ]]; then
-        valid_image_ref "$UPDATER_IMAGE" || die "release.json: updater_image không ghim theo digest ('${UPDATER_IMAGE}')."
-    fi
+    valid_image_ref "$UPDATER_IMAGE" || die "release.json: updater_image thiếu hoặc không ghim theo digest ('${UPDATER_IMAGE}')."
 
     check_tar_paths "$out/$tarball"
     BUNDLE_TARBALL="$out/$tarball"

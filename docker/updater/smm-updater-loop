@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Vòng lặp của container updater: ghi heartbeat, nhận /updates/request.json do app ghi, gọi smm-update.
+# Khởi động: phục hồi lần cập nhật bị ngắt giữa chừng (status còn "running"). Không mở cổng nào.
+# UPDATE_TIMEOUT (giây, mặc định 1200 = 20 phút): giới hạn tổng của MỘT lần cập nhật; quá giờ thì gửi TERM (smm-update tự khôi phục
+# bản cũ), sau UPDATE_KILL_AFTER giây (mặc định 600, đủ cho khôi phục) mà chưa thoát thì KILL.
+# LOOP_INTERVAL, LOOP_MAX_ITERATIONS, SMM_UPDATE_BIN chỉ để kiểm thử.
+set -Eeuo pipefail
+umask 022
+
+UPDATES_DIR="${UPDATES_DIR:-/updates}"
+# Chỉ inbox/ là app ghi được (smm-update đặt quyền); mọi file updater ghi nằm ở thư mục gốc thuộc root.
+REQUEST_FILE="$UPDATES_DIR/inbox/request.json"
+LOOP_INTERVAL="${LOOP_INTERVAL:-5}"
+LOOP_MAX_ITERATIONS="${LOOP_MAX_ITERATIONS:-0}"
+SMM_UPDATE_BIN="${SMM_UPDATE_BIN:-smm-update}"
+UPDATE_TIMEOUT="${UPDATE_TIMEOUT:-1200}"
+UPDATE_KILL_AFTER="${UPDATE_KILL_AFTER:-600}"
+[[ "$UPDATE_TIMEOUT" =~ ^[0-9]+$ ]] && ((UPDATE_TIMEOUT > 0)) || UPDATE_TIMEOUT=1200
+[[ "$UPDATE_KILL_AFTER" =~ ^[0-9]+$ ]] && ((UPDATE_KILL_AFTER > 0)) || UPDATE_KILL_AFTER=600
+export UPDATE_TIMEOUT
+
+STOPPING=0
+CHILD_PID=""
+
+log() { printf '[%s] updater: %s\n' "$(date +%H:%M:%S)" "$*"; }
+
+# Heartbeat = epoch giây, ghi nguyên tử để app không đọc file dở.
+beat() {
+    local tmp
+    tmp="$(mktemp "$UPDATES_DIR/.heartbeat.XXXXXX")"
+    date +%s > "$tmp"
+    chmod 644 "$tmp"
+    mv -f "$tmp" "$UPDATES_DIR/heartbeat"
+}
+
+on_stop() {
+    STOPPING=1
+    if [[ -n "$CHILD_PID" ]]; then
+        kill -TERM "$CHILD_PID" 2> /dev/null || true
+    fi
+}
+trap on_stop TERM INT
+
+# Ngủ nhưng bị đánh thức ngay khi nhận tín hiệu dừng.
+nap() {
+    sleep "$LOOP_INTERVAL" &
+    wait $! || true
+}
+
+# --recover cũng đặt lại quyền /updates nên chạy trước lần ghi heartbeat đầu tiên.
+log "khởi động, kiểm tra lần chạy dở"
+"$SMM_UPDATE_BIN" --recover || log "phục hồi báo lỗi (mã $?)"
+mkdir -p "$UPDATES_DIR"
+beat
+
+iterations=0
+while ((STOPPING == 0)); do
+    beat || log "không ghi được heartbeat"
+
+    if [[ -f "$REQUEST_FILE" ]]; then
+        # Chỉ lấy chuỗi version, cắt ngắn; smm-update tự kiểm định dạng nghiêm ngặt và ghi lý do nếu sai.
+        version="$(jq -r '.version // "" | tostring' "$REQUEST_FILE" 2> /dev/null || true)"
+        version="${version:0:64}"
+        # Không để chuỗi từ app thành tuỳ chọn của smm-update (vd "--recover").
+        [[ "$version" == -* ]] && version=""
+        rm -f "$REQUEST_FILE"
+
+        log "nhận yêu cầu cập nhật"
+        started="$(date +%s)"
+        timeout -s TERM -k "$UPDATE_KILL_AFTER" "$UPDATE_TIMEOUT" "$SMM_UPDATE_BIN" "$version" &
+        CHILD_PID=$!
+        # Vừa chạy vừa giữ heartbeat: lần cập nhật kéo dài nhiều phút, app coi heartbeat cũ > 60s là updater đã chết.
+        while kill -0 "$CHILD_PID" 2> /dev/null; do
+            beat || log "không ghi được heartbeat"
+            nap
+        done
+        wait "$CHILD_PID" || log "smm-update kết thúc với mã $?"
+        CHILD_PID=""
+
+        # Dù kết thúc kiểu gì (thành công, lỗi, quá giờ, bị SIGKILL/OOM) trạng thái không được kẹt ở "running":
+        # --recover không làm gì nếu smm-update đã tự ghi trạng thái cuối.
+        timed_out=0
+        if (($(date +%s) - started >= UPDATE_TIMEOUT)); then
+            timed_out=1
+            log "lần cập nhật chạy quá ${UPDATE_TIMEOUT}s"
+        fi
+        UPDATE_TIMED_OUT="$timed_out" "$SMM_UPDATE_BIN" --recover || log "phục hồi sau lần chạy báo lỗi (mã $?)"
+    fi
+
+    iterations=$((iterations + 1))
+    if ((LOOP_MAX_ITERATIONS > 0 && iterations >= LOOP_MAX_ITERATIONS)); then
+        break
+    fi
+    nap
+done
+log "dừng"

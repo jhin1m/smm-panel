@@ -29,6 +29,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+    volumes:                              # khai lại đủ danh sách: merge key không nối thêm vào volumes của x-app
+      - app_storage:/var/www/html/storage/app
+      - ./custom:/var/www/html/custom:ro
+      - updates:/updates                  # request.json app ghi → updater đọc; status/heartbeat updater ghi → app đọc
 
   queue:
     <<: *app
@@ -49,6 +53,24 @@ services:
     healthcheck:
       test: ["CMD", "healthcheck-schedule"]
       start_period: 20s
+
+  # Cập nhật từ admin và update.sh. Giữ docker.sock (= quyền root host) nên: image ghim digest, repo release đóng cứng
+  # trong image (không đọc từ .env), KHÔNG mở cổng, KHÔNG nằm chung env_file với app, .env không mount vào app.
+  updater:
+    image: ${UPDATER_IMAGE:?Đặt UPDATER_IMAGE trong .env (image updater ghim digest, lấy từ release.json)}
+    restart: unless-stopped
+    working_dir: ${INSTALL_DIR:?Đặt INSTALL_DIR trong .env (thư mục cài, vd /opt/smm-panel)}
+    environment:
+      COMPOSE_PROJECT_NAME: smm-panel
+      INSTALL_DIR: ${INSTALL_DIR}
+      BACKUP_DIR: ${BACKUP_DIR:-/srv/backups/smm-panel}
+      UPDATER_ALLOW_PRERELEASE: ${UPDATER_ALLOW_PRERELEASE:-false}
+      UPDATE_TIMEOUT: ${UPDATER_TIMEOUT:-1200}   # giây; quá giờ thì dừng và khôi phục
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${INSTALL_DIR}:${INSTALL_DIR}      # cùng đường dẫn với host để bind mount tương đối trong compose.yml trỏ đúng
+      - ${BACKUP_DIR:-/srv/backups/smm-panel}:${BACKUP_DIR:-/srv/backups/smm-panel}
+      - updates:/updates
 
   postgres:
     image: postgres:17
@@ -98,3 +120,4 @@ volumes:
   app_storage:
   caddy_data:
   caddy_config:
+  updates:

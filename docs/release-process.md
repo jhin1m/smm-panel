@@ -37,14 +37,24 @@ Asset đính kèm Release (dựng bằng `deploy/build-bundle.sh`, cùng script 
 
 | Asset | Nội dung |
 |---|---|
-| `smm-panel-deploy-vX.Y.Z.tar.gz` | `compose.yml`, `.env.template`, `docker/caddy/Caddyfile`, `docker/backup/backup-db.sh`, `custom/README.md` (+ `update.sh` khi có) |
-| `release.json` | `{"version": "X.Y.Z", "app_image": "ghcr.io/jhin1m/smm-panel@sha256:..."}` |
+| `smm-panel-deploy-vX.Y.Z.tar.gz` | `compose.yml`, `.env.template`, `docker/caddy/Caddyfile`, `docker/backup/backup-db.sh`, `custom/README.md`, `update.sh` |
+| `release.json` | `{"version": "X.Y.Z", "app_image": "ghcr.io/jhin1m/smm-panel@sha256:...", "updater_image": "ghcr.io/jhin1m/smm-panel-updater@sha256:..."}` |
 | `checksums.txt` | `sha256sum` của tarball, `release.json`, `install.sh` |
 | `install.sh` | bản cùng commit với tag |
 
+### Image updater
+
+Mỗi release dựng và đẩy thêm `ghcr.io/jhin1m/smm-panel-updater:X.Y.Z` (từ `docker/updater/`, `--build-arg RELEASE_REPO=${{ github.repository }}`); digest ghi vào `release.json` (`updater_image`). `install.sh` bắt buộc khoá này. Repo nguồn cập nhật **đóng cứng trong image updater**, không đọc từ `.env`: ai fork phải build image updater từ fork của mình (workflow làm sẵn).
+
+Quy tắc khi sửa `compose.yml`/bundle (updater áp `compose.yml` của bản đích lên instance cũ):
+- Biến `.env` mới bắt buộc phải có giá trị mặc định an toàn trong `compose.yml` (`${VAR:-...}`), và được ghi trong release notes mục "Migration": updater không sửa `.env` ngoài `APP_VERSION`/`APP_IMAGE`.
+- Updater `pull` và `up -d` mọi service trong `compose.yml` của bản đích trừ `updater` (kể cả service mới thêm); `app` phải tồn tại vì đó là service được chờ healthy. Service bị bỏ khỏi `compose.yml` không được tự dừng (container mồ côi), nêu cách dọn trong release notes.
+- Updater không tự cập nhật image của chính nó từ web: bản phát hành đổi `docker/updater/*` chỉ có hiệu lực sau khi người vận hành chạy `./update.sh` trên máy chủ (nói rõ trong release notes).
+- `docker/backup/backup-db.sh` của bundle đích là bản updater dùng để backup trước khi cập nhật: giữ tương thích biến `BACKUP_SUBDIR`/`BACKUP_LABEL`.
+
 ### Lần đầu tiên: package GHCR
 
-Package mới tạo mặc định là **private**. Lần đầu (rc.1) bước "Kiểm image pull được khi không đăng nhập" sẽ dừng workflow và nhắc việc: vào GitHub → Packages → `smm-panel` → Package settings → Change visibility → Public, rồi **Re-run failed jobs**. Chỉ cần làm một lần.
+Hai package (`smm-panel`, `smm-panel-updater`) mới tạo mặc định là **private**. Lần đầu (rc.1) bước "Kiểm image pull được khi không đăng nhập" sẽ dừng workflow và nhắc việc: vào GitHub → Packages → từng package → Package settings → Change visibility → Public, rồi **Re-run failed jobs**. Chỉ cần làm một lần.
 
 ### Release notes
 

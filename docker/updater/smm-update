@@ -1,0 +1,569 @@
+#!/usr/bin/env bash
+# Một lần cập nhật SMM Panel lên phiên bản đã phát hành. Chạy trong container updater (loop gọi khi admin bấm nút)
+# hoặc từ host qua deploy/update.sh (`docker compose run --rm --no-deps updater smm-update X.Y.Z`): CÙNG một bản cài đặt.
+#
+#   smm-update X.Y.Z | X.Y.Z-rc.N    cập nhật
+#   smm-update --recover             xử lý lần chạy bị ngắt giữa chừng (loop gọi khi khởi động)
+#
+# Nguyên tắc:
+#   - Nguồn tải là RELEASE_REPO đóng cứng trong image (không đọc từ .env); mọi file tải về phải qua sha256sum -c.
+#   - KHÔNG dùng `artisan down` (chặn cả /admin và webhook): chỉ bảo trì trang khách (app:customer-maintenance).
+#   - Mọi đường thoát đều tắt bảo trì và ghi trạng thái cuối; lỗi sau khi đã thay bundle thì khôi phục bản đã lưu.
+#   - Không tự cập nhật image updater (chỉ update.sh trên host làm việc đó).
+#
+# Biến môi trường (compose đặt): INSTALL_DIR, BACKUP_DIR, UPDATES_DIR, UPDATER_ALLOW_PRERELEASE, RELEASE_REPO (từ image).
+# UPDATE_TIMEOUT (giây, mặc định 1200): giới hạn tổng của một lần chạy; chính loop áp bằng `timeout`, ở đây chỉ để ghi đúng lý do khi bị cắt.
+# UPDATE_TIMED_OUT=1 (loop đặt khi gọi --recover sau lần chạy bị cắt vì quá giờ).
+# RELEASE_DOWNLOAD_BASE, HEALTH_TIMEOUT, HEALTH_INTERVAL, RETRY_SLEEP chỉ để kiểm thử.
+set -Eeuo pipefail
+umask 022
+
+INSTALL_DIR="${INSTALL_DIR:-$PWD}"
+UPDATES_DIR="${UPDATES_DIR:-/updates}"
+BACKUP_DIR="${BACKUP_DIR:-/srv/backups/smm-panel}"
+RELEASE_REPO="${RELEASE_REPO:?RELEASE_REPO phải được đóng cứng trong image updater}"
+RELEASE_DOWNLOAD_BASE="${RELEASE_DOWNLOAD_BASE:-https://github.com/${RELEASE_REPO}/releases/download}"
+HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-300}"
+HEALTH_INTERVAL="${HEALTH_INTERVAL:-5}"
+RETRY_SLEEP="${RETRY_SLEEP:-5}"
+UPDATER_ALLOW_PRERELEASE="${UPDATER_ALLOW_PRERELEASE:-false}"
+UPDATE_TIMEOUT="${UPDATE_TIMEOUT:-1200}"
+[[ "$UPDATE_TIMEOUT" =~ ^[0-9]+$ ]] && ((UPDATE_TIMEOUT > 0)) || UPDATE_TIMEOUT=1200
+
+# /updates chỉ root ghi; app (www-data) chỉ ghi được inbox/ (request.json). Nếu app ghi được thư mục gốc, nó có thể
+# đặt symlink update.lock/update.log/... trỏ tới .env hay bản backup trên host và updater (root) sẽ cắt/ghi đè chúng.
+INBOX_DIR="$UPDATES_DIR/inbox"
+APP_UID=33
+STATUS_FILE="$UPDATES_DIR/status.json"
+HISTORY_FILE="$UPDATES_DIR/history.jsonl"
+LOG_FILE="$UPDATES_DIR/update.log"
+SAVED_DIR="$INSTALL_DIR/.update-saved"
+
+SEMVER_RE='^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-rc\.[0-9]{1,6})?$'
+IMAGE_RE='^[a-z0-9][a-z0-9./_-]*(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$'
+REPO_RE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+
+MODE="update"
+TARGET_VERSION=""
+FROM_VERSION=""
+STARTED_AT="$(date +%s)"
+CURRENT_STEP="validate"
+FAIL_MSG=""
+OUTCOME="failed"
+MAINT_TOUCHED=0
+SWAP_STARTED=0
+CADDY_CHANGED=0
+WORK_DIR=""
+APP_IMAGE_NEW=""
+SERVICES=() # mọi service của compose.yml hiện hành trừ updater (nạp bằng load_services)
+
+# ---------------------------------------------------------------- tiện ích
+
+log() {
+    printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$LOG_FILE"
+}
+
+# Chạy lệnh, ghi cả stdout/stderr vào log (và ra màn hình khi chạy từ host). Trả mã thoát của lệnh.
+run_logged() {
+    "$@" 2>&1 | tee -a "$LOG_FILE"
+}
+
+# fd 9 (khoá update.lock) không được lọt vào tiến trình con: docker compose treo sau khi bị cắt giờ sẽ giữ khoá mãi.
+dc() {
+    (cd "$INSTALL_DIR" && docker compose "$@" 9>&-)
+}
+
+# Nạp SERVICES = mọi service trong compose.yml hiện hành trừ updater (không tự cập nhật chính mình). Phải có `app`.
+load_services() {
+    local out
+    out="$(dc config --services)" || return 1
+    mapfile -t SERVICES < <(grep -vxE 'updater|' <<< "$out" || true)
+    local s
+    for s in "${SERVICES[@]}"; do
+        [[ "$s" == app ]] && return 0
+    done
+    return 1
+}
+
+# Ghi trạng thái nguyên tử (file tạm + rename) để app không bao giờ đọc file dở. Quyền 644 để www-data đọc được.
+write_status() {
+    local state="$1" step="$2" message="${3:-}" tmp
+    tmp="$(mktemp "$UPDATES_DIR/.status.XXXXXX")"
+    jq -n \
+        --arg state "$state" --arg step "$step" --arg message "$message" \
+        --arg from "$FROM_VERSION" --arg to "$TARGET_VERSION" \
+        --arg tail "$(tail -n 25 "$LOG_FILE" 2> /dev/null || true)" \
+        --argjson started "$STARTED_AT" --argjson now "$(date +%s)" \
+        '{state: $state, step: $step, message: $message, from: $from, to: $to, log_tail: $tail, started_at: $started, updated_at: $now}' \
+        > "$tmp"
+    chmod 644 "$tmp"
+    mv -f "$tmp" "$STATUS_FILE"
+}
+
+# Thêm lần chạy vừa kết thúc vào lịch sử (giữ 10 dòng, không kèm log_tail).
+append_history() {
+    local tmp
+    tmp="$(mktemp "$UPDATES_DIR/.history.XXXXXX")"
+    {
+        { tail -n 9 "$HISTORY_FILE" 2> /dev/null || true; }
+        jq -c 'del(.log_tail)' "$STATUS_FILE"
+    } > "$tmp"
+    chmod 644 "$tmp"
+    mv -f "$tmp" "$HISTORY_FILE"
+}
+
+step() {
+    CURRENT_STEP="$1"
+    log "== Bước: $1"
+    write_status running "$1"
+}
+
+fail() {
+    FAIL_MSG="$*"
+    log "LỖI: $*"
+    exit 1
+}
+
+env_get() {
+    local file="$INSTALL_DIR/.env" line
+    [[ -f "$file" ]] || return 0
+    line="$(grep -E "^$1=" "$file" | tail -n 1 || true)"
+    line="${line#*=}"
+    line="${line%\"}"
+    line="${line#\"}"
+    printf '%s' "$line"
+}
+
+# env_set <KEY> <value>: thay dòng KEY=... trong .env (hoặc thêm cuối), ghi nguyên tử, giữ quyền 600.
+# Giá trị đã được kiểm định dạng từ trước (version, image digest) nên không chứa ký tự đặc biệt.
+env_set() {
+    local file="$INSTALL_DIR/.env" tmp
+    tmp="$(mktemp "$file.XXXXXX")" || return 1
+    ENV_K="$1" ENV_V="$2" awk '
+        BEGIN { k = ENVIRON["ENV_K"]; v = ENVIRON["ENV_V"]; done = 0 }
+        index($0, k "=") == 1 { print k "=" v; done = 1; next }
+        { print }
+        END { if (!done) print k "=" v }
+    ' "$file" > "$tmp" || { rm -f "$tmp"; return 1; }
+    chmod 600 "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$file" || { rm -f "$tmp"; return 1; }
+}
+
+# json_get <file> <key>: giá trị chuỗi của khoá cấp cao nhất.
+json_get() {
+    jq -r --arg k "$2" '.[$k] // "" | if type == "string" then . else "" end' "$1" 2> /dev/null || true
+}
+
+# semver_gt A B: thành công khi A > B. Chỉ nhận X.Y.Z hoặc X.Y.Z-rc.N; bản ổn định > rc cùng X.Y.Z.
+semver_gt() {
+    local a="$1" b="$2" ac bc ap="" bp="" i
+    local -a av bv
+    ac="${a%%-*}"
+    bc="${b%%-*}"
+    [[ "$a" == *-* ]] && ap="${a#*-rc.}"
+    [[ "$b" == *-* ]] && bp="${b#*-rc.}"
+    IFS=. read -r -a av <<< "$ac"
+    IFS=. read -r -a bv <<< "$bc"
+    for i in 0 1 2; do
+        if ((10#${av[i]} != 10#${bv[i]})); then
+            ((10#${av[i]} > 10#${bv[i]}))
+            return
+        fi
+    done
+    [[ -z "$ap" && -z "$bp" ]] && return 1
+    [[ -z "$ap" ]] && return 0
+    [[ -z "$bp" ]] && return 1
+    ((10#$ap > 10#$bp))
+}
+
+# ---------------------------------------------------------------- bảo trì khách, sức khoẻ
+
+maintenance_set() {
+    run_logged dc exec -T app php artisan app:customer-maintenance "$1"
+}
+
+# Tắt bảo trì, thử lại vài lần vì app có thể đang khởi động lại sau khi khôi phục.
+maintenance_off_retry() {
+    local attempt
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        if maintenance_set off; then
+            return 0
+        fi
+        log "Chưa tắt được bảo trì (lần $attempt/12), thử lại sau ${RETRY_SLEEP}s"
+        sleep "$RETRY_SLEEP"
+    done
+    return 1
+}
+
+# wait_app_healthy <giây>: 0 khi container app running + healthy; 1 khi unhealthy/thoát hoặc hết giờ.
+wait_app_healthy() {
+    local timeout="$1" waited=0 cid state
+    while ((waited < timeout)); do
+        cid="$(dc ps -q app 2> /dev/null | head -n 1 || true)"
+        if [[ -n "$cid" ]]; then
+            state="$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2> /dev/null || true)"
+            case "$state" in
+                "running healthy") return 0 ;;
+                "running unhealthy" | exited* | dead*)
+                    log "Container app: $state"
+                    return 1
+                    ;;
+                *) ;;
+            esac
+        fi
+        sleep "$HEALTH_INTERVAL"
+        waited=$((waited + HEALTH_INTERVAL))
+    done
+    log "app chưa healthy sau ${timeout}s"
+    return 1
+}
+
+smoke_login() {
+    local attempt code
+    for attempt in 1 2 3; do
+        code="$(dc exec -T app curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/login 2> /dev/null || true)"
+        log "GET /login -> ${code:-không có phản hồi}"
+        [[ "$code" == "200" ]] && return 0
+        sleep "$RETRY_SLEEP"
+    done
+    return 1
+}
+
+notify_admin() {
+    dc exec -T app php artisan app:notify-admin "$1" > /dev/null 2>&1 || log "Không gửi được thông báo admin."
+}
+
+# ---------------------------------------------------------------- lưu / khôi phục bundle
+
+# Thay file bằng bản mới theo kiểu tạo file mới rồi rename: tiến trình đang đọc file cũ (vd update.sh đang chạy) không bị hỏng.
+replace_file() {
+    local src="$1" dst="$2" tmp
+    tmp="$(mktemp "$dst.XXXXXX")" || return 1
+    cp -p "$src" "$tmp" || { rm -f "$tmp"; return 1; }
+    mv -f "$tmp" "$dst" || { rm -f "$tmp"; return 1; }
+}
+
+# Các hàm lưu/áp/khôi phục được gọi trong `cmd || fail` nên `set -e` KHÔNG có hiệu lực bên trong: mọi lệnh phải tự `|| return 1`,
+# nếu không một lần cp lỗi (đầy đĩa) vẫn đánh dấu .complete và lần khôi phục sau đó chép .env hỏng đè lên bản thật.
+save_current() {
+    local f
+    rm -rf "$SAVED_DIR" || return 1
+    mkdir -m 700 "$SAVED_DIR" || return 1
+    cp -a "$INSTALL_DIR/compose.yml" "$INSTALL_DIR/.env" "$SAVED_DIR/" || return 1
+    cp -a "$INSTALL_DIR/docker" "$SAVED_DIR/docker" || return 1
+    for f in .env.template update.sh; do
+        if [[ -f "$INSTALL_DIR/$f" ]]; then
+            cp -a "$INSTALL_DIR/$f" "$SAVED_DIR/$f" || return 1
+        fi
+    done
+    : > "$SAVED_DIR/.complete"
+}
+
+# Khôi phục compose.yml/.env/docker/ đã lưu. docker/ ghi đè tại chỗ (giữ inode: Caddyfile là bind mount file).
+restore_saved() {
+    local f
+    [[ -f "$SAVED_DIR/.complete" ]] || return 1
+    replace_file "$SAVED_DIR/compose.yml" "$INSTALL_DIR/compose.yml" || return 1
+    replace_file "$SAVED_DIR/.env" "$INSTALL_DIR/.env" || return 1
+    cp -a "$SAVED_DIR/docker/." "$INSTALL_DIR/docker/" || return 1
+    for f in .env.template update.sh; do
+        if [[ -f "$SAVED_DIR/$f" ]]; then
+            replace_file "$SAVED_DIR/$f" "$INSTALL_DIR/$f" || return 1
+        fi
+    done
+    return 0
+}
+
+# Quay về bản đã lưu và khởi động lại dịch vụ. 0 nếu app healthy trở lại.
+rollback() {
+    CURRENT_STEP="rollback"
+    write_status running rollback
+    log "== Khôi phục bản cấu hình trước khi cập nhật"
+    restore_saved || { log "Không có bản lưu đầy đủ để khôi phục."; return 1; }
+    load_services || { log "Không liệt kê được service của compose.yml đã khôi phục."; return 1; }
+    run_logged dc up -d "${SERVICES[@]}" || { log "docker compose up lỗi khi khôi phục."; return 1; }
+    wait_app_healthy 180 || { log "App chưa healthy sau khi khôi phục."; return 1; }
+    rm -rf "$SAVED_DIR"
+}
+
+# ---------------------------------------------------------------- tải + kiểm bundle
+
+# verify_checksum <thư mục> <file...>: mỗi file PHẢI có dòng trong checksums.txt và khớp sha256.
+verify_checksum() {
+    local dir="$1" file
+    shift
+    [[ -s "$dir/checksums.txt" ]] || return 1
+    for file in "$@"; do
+        awk -v f="$file" '{ n = $2; sub(/^\*/, "", n); if (n == f) print }' "$dir/checksums.txt" > "$dir/.check-line"
+        [[ -s "$dir/.check-line" ]] || { log "checksums.txt không có dòng cho $file"; return 1; }
+        (cd "$dir" && sha256sum -c .check-line > /dev/null 2>&1) || { log "Checksum SAI cho $file"; return 1; }
+    done
+    rm -f "$dir/.check-line"
+}
+
+download_and_verify() {
+    local base="$RELEASE_DOWNLOAD_BASE/v$TARGET_VERSION" tarball="smm-panel-deploy-v${TARGET_VERSION}.tar.gz" asset
+    local out="$WORK_DIR/dl" listing
+    mkdir -p "$out"
+    for asset in "$tarball" checksums.txt release.json; do
+        log "Tải $asset"
+        curl -fsSL --retry 3 --connect-timeout 15 --max-time 300 "$base/$asset" -o "$out/$asset" \
+            || fail "Không tải được $asset của v$TARGET_VERSION (phiên bản không tồn tại hoặc lỗi mạng)."
+    done
+
+    CURRENT_STEP="verify"
+    write_status running verify
+    verify_checksum "$out" "$tarball" release.json || fail "Checksum không khớp hoặc thiếu: bundle có thể bị hỏng hay bị can thiệp. Không cập nhật."
+
+    [[ "$(json_get "$out/release.json" version)" == "$TARGET_VERSION" ]] || fail "release.json không khớp phiên bản yêu cầu."
+    APP_IMAGE_NEW="$(json_get "$out/release.json" app_image)"
+    [[ "$APP_IMAGE_NEW" =~ $IMAGE_RE ]] || fail "release.json: app_image thiếu hoặc không ghim theo digest."
+
+    listing="$(tar -tvzf "$out/$tarball")" || fail "Không đọc được tarball bundle."
+    if tar -tzf "$out/$tarball" | grep -Eq '(^/|(^|/)\.\.(/|$))' || grep -Eq '^[lh]' <<< "$listing"; then
+        fail "Bundle chứa đường dẫn hoặc liên kết không an toàn."
+    fi
+    mkdir -p "$WORK_DIR/bundle"
+    tar -xzf "$out/$tarball" -C "$WORK_DIR/bundle" --no-same-owner
+    local required
+    for required in compose.yml .env.template docker/backup/backup-db.sh docker/caddy/Caddyfile; do
+        [[ -f "$WORK_DIR/bundle/$required" ]] || fail "Bundle thiếu $required."
+    done
+}
+
+# Thay bundle (không đụng .env, custom/) rồi đặt APP_VERSION/APP_IMAGE theo release.
+apply_bundle() {
+    local bundle="$WORK_DIR/bundle" f
+    if ! cmp -s "$bundle/docker/caddy/Caddyfile" "$INSTALL_DIR/docker/caddy/Caddyfile"; then
+        CADDY_CHANGED=1
+    fi
+    replace_file "$bundle/compose.yml" "$INSTALL_DIR/compose.yml" || return 1
+    cp -a "$bundle/docker/." "$INSTALL_DIR/docker/" || return 1
+    for f in .env.template update.sh; do
+        if [[ -f "$bundle/$f" ]]; then
+            replace_file "$bundle/$f" "$INSTALL_DIR/$f" || return 1
+        fi
+    done
+    env_set APP_VERSION "v$TARGET_VERSION" || return 1
+    env_set APP_IMAGE "$APP_IMAGE_NEW"
+}
+
+# ---------------------------------------------------------------- kết thúc (mọi đường thoát)
+
+on_err() {
+    [[ -n "$FAIL_MSG" ]] || FAIL_MSG="Lỗi không mong đợi ở dòng $1 (bước $CURRENT_STEP)."
+}
+
+on_signal() {
+    if (($(date +%s) - STARTED_AT >= UPDATE_TIMEOUT)); then
+        FAIL_MSG="Quá thời gian tối đa $((UPDATE_TIMEOUT / 60)) phút (bước $CURRENT_STEP) nên bị dừng."
+    else
+        FAIL_MSG="Bị ngắt bởi tín hiệu hệ thống giữa chừng."
+    fi
+    exit 1
+}
+
+on_exit() {
+    local rc=$?
+    trap - EXIT ERR
+    set +e
+    [[ "$MODE" == "update" ]] || exit "$rc"
+
+    local note="" off_failed=0
+
+    if [[ "$OUTCOME" != "success" && "$SWAP_STARTED" == 1 ]]; then
+        if rollback; then
+            note=" Đã quay về bản ${FROM_VERSION:-trước đó}."
+        else
+            note=" KHÔI PHỤC TỰ ĐỘNG THẤT BẠI: kiểm tra thủ công (xem docs/deployment.md, mục Cập nhật)."
+        fi
+    fi
+
+    if [[ "$MAINT_TOUCHED" == 1 ]]; then
+        maintenance_off_retry || off_failed=1
+    fi
+
+    if [[ "$off_failed" == 1 ]]; then
+        note="$note Không tắt được chế độ bảo trì trang khách: chạy 'docker compose exec app php artisan app:customer-maintenance off'."
+        OUTCOME="failed"
+    fi
+
+    if [[ "$OUTCOME" == "success" ]]; then
+        log "Hoàn tất: đã cập nhật lên $TARGET_VERSION."
+        write_status success finalize "Đã cập nhật lên $TARGET_VERSION."
+    else
+        [[ -n "$FAIL_MSG" ]] || FAIL_MSG="Cập nhật thất bại (bước $CURRENT_STEP)."
+        log "Thất bại: $FAIL_MSG$note"
+        write_status failed "$CURRENT_STEP" "$FAIL_MSG$note"
+        if [[ "$SWAP_STARTED" == 1 || "$off_failed" == 1 ]]; then
+            notify_admin "Cập nhật lên $TARGET_VERSION thất bại: $FAIL_MSG$note"
+        fi
+    fi
+    append_history
+
+    [[ -n "$WORK_DIR" ]] && rm -rf "$WORK_DIR"
+    [[ "$OUTCOME" == "success" ]] && exit 0
+    exit 1
+}
+
+# ---------------------------------------------------------------- chế độ khôi phục khi khởi động
+
+recover_interrupted() {
+    local state
+    state="$(json_get "$STATUS_FILE" state)"
+    [[ "$state" == "running" ]] || return 0
+
+    FROM_VERSION="$(json_get "$STATUS_FILE" from)"
+    TARGET_VERSION="$(json_get "$STATUS_FILE" to)"
+    STARTED_AT="$(jq -r '.started_at // 0' "$STATUS_FILE" 2> /dev/null || echo 0)"
+    log "Phát hiện lần cập nhật bị ngắt giữa chừng (đang ở bước $(json_get "$STATUS_FILE" step)): phục hồi."
+
+    local note="" restored=0
+    if [[ -f "$SAVED_DIR/.complete" ]]; then
+        if rollback; then
+            restored=1
+            note=" Đã quay về bản ${FROM_VERSION:-trước đó}."
+        else
+            note=" Khôi phục tự động thất bại: kiểm tra thủ công."
+        fi
+    fi
+    if ! maintenance_off_retry; then
+        note="$note Không tắt được bảo trì trang khách."
+    fi
+
+    if [[ "${UPDATE_TIMED_OUT:-0}" == 1 ]]; then
+        write_status failed recover "Quá thời gian tối đa $((UPDATE_TIMEOUT / 60)) phút nên bị dừng (interrupted).$note"
+    else
+        write_status failed recover "Bị ngắt giữa chừng (interrupted).$note"
+    fi
+    append_history
+    if [[ "$restored" == 1 || "$note" == *"thất bại"* || "$note" == *"Không tắt"* ]]; then
+        notify_admin "Cập nhật bị ngắt giữa chừng và đã được phục hồi.$note"
+    fi
+}
+
+# ---------------------------------------------------------------- thư mục chung với app
+
+# Đặt lại quyền /updates mỗi lần chạy (volume có thể được tạo trước bởi image khác hoặc bản cũ): gốc thuộc root 755,
+# inbox/ thuộc www-data. Xoá symlink ở thư mục gốc (chỉ có thể do bố cục cũ để lại) trước khi mở bất kỳ file nào.
+secure_updates_dir() {
+    local entry
+    mkdir -p "$UPDATES_DIR"
+    if [[ "$(id -u)" == 0 ]]; then
+        chown 0:0 "$UPDATES_DIR"
+        chmod 755 "$UPDATES_DIR"
+    fi
+    for entry in "$UPDATES_DIR"/* "$UPDATES_DIR"/.??*; do
+        if [[ -L "$entry" ]]; then
+            rm -f "$entry"
+        fi
+    done
+    mkdir -p "$INBOX_DIR"
+    if [[ "$(id -u)" == 0 ]]; then
+        chown "$APP_UID:$APP_UID" "$INBOX_DIR"
+        chmod 755 "$INBOX_DIR"
+    fi
+}
+
+# ---------------------------------------------------------------- luồng chính
+
+run_update() {
+    step validate
+    [[ "$TARGET_VERSION" =~ $SEMVER_RE ]] || fail "Phiên bản yêu cầu không hợp lệ (cần X.Y.Z hoặc X.Y.Z-rc.N)."
+    [[ "$RELEASE_REPO" =~ $REPO_RE ]] || fail "RELEASE_REPO của image updater không hợp lệ."
+    if [[ "$TARGET_VERSION" == *-* && "$UPDATER_ALLOW_PRERELEASE" != "true" ]]; then
+        fail "Bản thử nghiệm (-rc) chưa được bật (UPDATER_ALLOW_PRERELEASE=true)."
+    fi
+    [[ -f "$INSTALL_DIR/compose.yml" && -f "$INSTALL_DIR/.env" ]] || fail "Không thấy compose.yml/.env trong $INSTALL_DIR."
+
+    # Không đoán bản đang chạy: thiếu/sai APP_VERSION thì không thể biết bản đích có mới hơn hay là hạ cấp.
+    [[ -n "$FROM_VERSION" ]] || fail "APP_VERSION trong .env thiếu hoặc không hợp lệ (cần vX.Y.Z hoặc vX.Y.Z-rc.N): đặt đúng phiên bản đang chạy rồi thử lại."
+    semver_gt "$TARGET_VERSION" "$FROM_VERSION" || fail "Phiên bản $TARGET_VERSION không mới hơn bản đang chạy ($FROM_VERSION)."
+
+    WORK_DIR="$(mktemp -d)"
+    step download
+    download_and_verify
+
+    # Bật bảo trì khách TRƯỚC khi sao lưu để dump nhất quán. Lỗi bật không chặn cập nhật (vd app đang tắt), nhưng được ghi lại.
+    step maintenance
+    MAINT_TOUCHED=1
+    maintenance_set on || log "Cảnh báo: không bật được bảo trì trang khách, tiếp tục."
+
+    # Dùng backup-db.sh của bundle đích: bản đang chạy có thể cũ, chưa hỗ trợ BACKUP_SUBDIR.
+    step backup
+    BACKUP_SUBDIR=pre-update BACKUP_LABEL="${FROM_VERSION:-unknown}-to-$TARGET_VERSION" BACKUP_DIR="$BACKUP_DIR" APP_DIR="$INSTALL_DIR" \
+        run_logged bash "$WORK_DIR/bundle/docker/backup/backup-db.sh" || fail "Sao lưu CSDL thất bại; không cập nhật."
+
+    step save
+    save_current || fail "Không lưu được bản cấu hình hiện tại."
+    SWAP_STARTED=1
+
+    step apply
+    apply_bundle || fail "Không áp được bundle mới."
+
+    step pull
+    load_services || fail "Không liệt kê được service trong compose.yml của bản mới (hoặc thiếu service app)."
+    run_logged dc pull "${SERVICES[@]}" || fail "docker compose pull thất bại."
+
+    step up
+    run_logged dc up -d "${SERVICES[@]}" || fail "docker compose up thất bại."
+
+    step health
+    wait_app_healthy "$HEALTH_TIMEOUT" || fail "app không healthy trong ${HEALTH_TIMEOUT}s."
+
+    # /login nằm sau bảo trì khách (503), nên phải mở lại trước khi kiểm.
+    step smoke
+    maintenance_set off || fail "Không tắt được bảo trì trang khách để kiểm tra."
+    smoke_login || fail "GET /login không trả 200 sau khi cập nhật."
+
+    step finalize
+    if [[ "$CADDY_CHANGED" == 1 ]]; then
+        run_logged dc exec -T caddy caddy reload --config /etc/caddy/Caddyfile || log "Cảnh báo: không reload được Caddy, hãy restart caddy khi tiện."
+    fi
+    run_logged dc exec -T app php artisan queue:restart || log "Cảnh báo: queue:restart lỗi."
+    rm -rf "$SAVED_DIR"
+    OUTCOME="success"
+}
+
+main() {
+    [[ $# -eq 1 ]] || { echo "Dùng: smm-update <X.Y.Z[-rc.N]> | --recover" >&2; exit 2; }
+    command -v jq > /dev/null || { echo "Thiếu jq" >&2; exit 2; }
+    secure_updates_dir
+
+    # Một lần cập nhật tại một thời điểm (web, update.sh trên host, khởi động lại); khoá nằm trên volume dùng chung.
+    exec 9> "$UPDATES_DIR/update.lock"
+    if ! flock -n 9; then
+        if [[ "$1" == "--recover" ]]; then
+            exit 0
+        fi
+        echo "Đang có một lần cập nhật khác chạy." >&2
+        exit 3
+    fi
+
+    if [[ "$1" == "--recover" ]]; then
+        MODE="recover"
+        [[ -f "$STATUS_FILE" ]] || exit 0
+        : >> "$LOG_FILE"
+        chmod 644 "$LOG_FILE"
+        recover_interrupted
+        exit 0
+    fi
+
+    # Chỉ chuỗi đúng định dạng mới vào trạng thái; chuỗi lạ bị chặn ở bước validate.
+    if [[ "$1" =~ $SEMVER_RE ]]; then
+        TARGET_VERSION="$1"
+    fi
+    FROM_VERSION="$(env_get APP_VERSION)"
+    FROM_VERSION="${FROM_VERSION#v}"
+    # Giá trị lạ không được lọt vào status.json: coi như không có.
+    [[ "$FROM_VERSION" =~ $SEMVER_RE ]] || FROM_VERSION=""
+
+    : > "$LOG_FILE"
+    chmod 644 "$LOG_FILE"
+    trap 'on_err $LINENO' ERR
+    trap on_signal TERM INT
+    trap on_exit EXIT
+    run_update
+}
+
+main "$@"

@@ -270,6 +270,9 @@ return [
                 'adjust_balance' => 'Adjusted balance',
                 'two_factor_reset' => 'Remove customer 2FA',
             ],
+            'system' => [
+                'update_requested' => 'Requested system update',
+            ],
             'tier' => [
                 'promote_all' => 'Bulk promotion by threshold',
             ],

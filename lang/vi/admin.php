@@ -270,6 +270,9 @@ return [
                 'adjust_balance' => 'Điều chỉnh số dư',
                 'two_factor_reset' => 'Gỡ 2FA của khách',
             ],
+            'system' => [
+                'update_requested' => 'Yêu cầu cập nhật hệ thống',
+            ],
             'tier' => [
                 'promote_all' => 'Nâng cấp hàng loạt theo ngưỡng',
             ],
