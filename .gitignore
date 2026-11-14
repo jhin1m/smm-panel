@@ -33,3 +33,9 @@ Thumbs.db
 /custom/*
 !/custom/README.md
 /VERSION
+
+# Tài liệu nội bộ: kế hoạch, nhật ký, mockup, cấu hình agent (chỉ giữ ở máy dev)
+/plans/
+/docs/journals/
+/docs/mockup/
+/.claude/
