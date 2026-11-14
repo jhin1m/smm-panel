@@ -1,0 +1,14 @@
+{
+    "id": 92704,
+    "gateway": "MBBank",
+    "transactionDate": "2026-11-14 09:15:00",
+    "accountNumber": "0000000000",
+    "code": "BPABC234",
+    "content": "BPABC234 chuyen tien",
+    "transferType": "in",
+    "transferAmount": 10000,
+    "accumulated": 19077000,
+    "subAccount": null,
+    "referenceCode": "MBVCB.3278907687",
+    "description": ""
+}

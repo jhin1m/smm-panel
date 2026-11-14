@@ -1,0 +1,67 @@
+<?php
+
+return [
+    'title' => 'System setup',
+    'step_of' => 'Step :step/:total',
+    'steps' => [
+        1 => 'Verify',
+        2 => 'Site details',
+        3 => 'Admin account',
+        4 => 'Optional',
+        5 => 'Finish',
+    ],
+    'url_mismatch' => 'Note: APP_URL is :configured but you are visiting :actual. Email links and Google login will point to :configured; fix APP_URL in .env if it is wrong. You can still continue the setup.',
+    'token' => [
+        'intro' => 'Enter the install token (INSTALL_TOKEN) printed by install.sh, or found in the .env file on the server.',
+        'not_configured' => 'No install token is configured. Run install.sh or set INSTALL_TOKEN in .env and restart.',
+        'invalid' => 'The install token is incorrect.',
+    ],
+    'fields' => [
+        'token' => 'Install token',
+        'site_name' => 'Site name',
+        'default_locale' => 'Default language',
+        'support_email' => 'Support email',
+        'support_zalo' => 'Support Zalo',
+        'support_telegram' => 'Support Telegram',
+        'admin_name' => 'Display name',
+        'admin_email' => 'Admin email',
+        'admin_password' => 'Password (at least 12 characters)',
+        'admin_password_confirmation' => 'Confirm password',
+        'bank_bin' => 'Bank BIN code (6 digits)',
+        'bank_name' => 'Bank name',
+        'account_number' => 'Account number',
+        'account_name' => 'Account holder (uppercase, no accents)',
+        'smtp_host' => 'SMTP host',
+        'smtp_port' => 'Port',
+        'smtp_encryption' => 'Encryption',
+        'smtp_username' => 'Username',
+        'smtp_password' => 'Password',
+        'mail_from_address' => 'From address',
+    ],
+    'admin' => [
+        'intro' => 'This account signs in at /admin. On first sign-in you will be asked to set up two-factor authentication (MFA).',
+    ],
+    'optional' => [
+        'intro' => 'You can skip this and configure it later in the admin area (Settings).',
+        'bank' => 'Bank account for top-ups',
+        'smtp' => 'Email (SMTP)',
+        'encryption' => [
+            'tls' => 'STARTTLS (port 587)',
+            'ssl' => 'SSL/TLS (port 465)',
+            'none' => 'No encryption',
+        ],
+    ],
+    'confirm' => [
+        'intro' => 'Review the details and press Finish. The setup page is then locked permanently.',
+        'configured' => 'Provided',
+        'skipped' => 'Skipped',
+        'mfa_note' => 'After finishing you are sent to the admin sign-in page to set up MFA.',
+    ],
+    'actions' => [
+        'continue' => 'Continue',
+        'next' => 'Next',
+        'back' => 'Back',
+        'skip' => 'Skip',
+        'finish' => 'Finish setup',
+    ],
+];

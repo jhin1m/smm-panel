@@ -1,0 +1,121 @@
+name: Release
+
+# Đẩy tag vX.Y.Z (hoặc vX.Y.Z-rc.N) → CI xanh → image GHCR → Release kèm bundle cài đặt.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Build image và tạo Release
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write   # tạo Release + upload asset
+      packages: write   # push image lên GHCR
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Phân tích tag
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::Tag '$TAG' không hợp lệ (cần vX.Y.Z hoặc vX.Y.Z-rc.N)."
+            exit 1
+          fi
+          version="${TAG#v}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          prerelease=false
+          [[ "$TAG" == *-* ]] && prerelease=true
+          {
+            echo "version=$version"
+            echo "image=$image"
+            echo "prerelease=$prerelease"
+            echo "tags<<EOF"
+            echo "$image:$version"
+            # :latest chỉ đổi theo bản ổn định, bản rc không bao giờ đụng tới.
+            [[ "$prerelease" == false ]] && echo "$image:latest"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build và push image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Package GHCR mới tạo mặc định là private; người cài không đăng nhập thì pull không được.
+      # Dừng ở đây (trước khi tạo Release) để sửa visibility rồi chạy lại job.
+      - name: Kiểm image pull được khi không đăng nhập
+        env:
+          IMAGE_REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          docker logout ghcr.io
+          if ! docker manifest inspect "$IMAGE_REF" > /dev/null; then
+            echo "::error::Không pull được $IMAGE_REF khi chưa đăng nhập. Đặt package thành Public (Package settings → Danger Zone → Change visibility) rồi chạy lại job."
+            exit 1
+          fi
+
+      - name: Dựng bundle (tarball, release.json, install.sh, checksums.txt)
+        env:
+          TAG: ${{ github.ref_name }}
+          IMAGE_REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: deploy/build-bundle.sh "$TAG" "$IMAGE_REF" dist
+
+      - name: Tạo Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+        run: |
+          cat > notes.md << 'NOTES'
+          ## View thay đổi
+
+          _Người phát hành điền trước khi thông báo: view lõi nào đổi (ảnh hưởng `custom/views`), hoặc "Không có"._
+
+          ## Migration
+
+          _Người phát hành điền trước khi thông báo: migration/settings mới (chỉ thêm, có giá trị mặc định), hoặc "Không có"._
+
+          ---
+
+          NOTES
+          flags=()
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --generate-notes \
+            "${flags[@]}"

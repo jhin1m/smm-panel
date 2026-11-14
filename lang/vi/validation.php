@@ -1,0 +1,61 @@
+<?php
+
+// Message validation tiếng Việt tối thiểu cho các rule app dùng (không đa ngôn ngữ).
+return [
+    'accepted' => ':attribute phải được chấp nhận.',
+    'array' => ':attribute phải là mảng.',
+    'between' => [
+        'numeric' => ':attribute phải trong khoảng :min – :max.',
+        'string' => ':attribute phải dài :min – :max ký tự.',
+    ],
+    'boolean' => ':attribute không hợp lệ.',
+    'confirmed' => 'Xác nhận :attribute không khớp.',
+    'current_password' => 'Mật khẩu không đúng.',
+    'date' => ':attribute không phải ngày hợp lệ.',
+    'email' => ':attribute phải là email hợp lệ.',
+    'exists' => ':attribute không tồn tại.',
+    'gt' => ['numeric' => ':attribute phải lớn hơn :value.'],
+    'gte' => ['numeric' => ':attribute phải lớn hơn hoặc bằng :value.'],
+    'in' => ':attribute không hợp lệ.',
+    'integer' => ':attribute phải là số nguyên.',
+    'lt' => ['numeric' => ':attribute phải nhỏ hơn :value.'],
+    'lte' => ['numeric' => ':attribute phải nhỏ hơn hoặc bằng :value.'],
+    'max' => [
+        'numeric' => ':attribute không được lớn hơn :max.',
+        'string' => ':attribute không được dài quá :max ký tự.',
+        'array' => ':attribute không được quá :max mục.',
+    ],
+    'min' => [
+        'numeric' => ':attribute phải ít nhất :min.',
+        'string' => ':attribute phải có ít nhất :min ký tự.',
+        'array' => ':attribute phải có ít nhất :min mục.',
+    ],
+    'not_in' => ':attribute không hợp lệ.',
+    'numeric' => ':attribute phải là số.',
+    'password' => [
+        'letters' => ':attribute phải có ít nhất một chữ cái.',
+        'mixed' => ':attribute phải có chữ hoa và chữ thường.',
+        'numbers' => ':attribute phải có ít nhất một chữ số.',
+        'symbols' => ':attribute phải có ít nhất một ký tự đặc biệt.',
+        'uncompromised' => ':attribute đã bị lộ trong một vụ rò rỉ dữ liệu, hãy chọn mật khẩu khác.',
+    ],
+    'regex' => ':attribute không đúng định dạng.',
+    'required' => 'Vui lòng nhập :attribute.',
+    'size' => ['string' => ':attribute phải dài :size ký tự.'],
+    'string' => ':attribute phải là chuỗi.',
+    'unique' => ':attribute đã được sử dụng.',
+    'url' => ':attribute phải là liên kết hợp lệ (http/https).',
+
+    'attributes' => [
+        'name' => 'tên hiển thị',
+        'email' => 'email',
+        'password' => 'mật khẩu',
+        'link' => 'liên kết',
+        'quantity' => 'số lượng',
+        'note' => 'ghi chú',
+        'amount' => 'số tiền',
+        'body' => 'tin nhắn',
+        'reason' => 'lý do',
+        'done' => 'tiến độ',
+    ],
+];

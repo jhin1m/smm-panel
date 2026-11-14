@@ -1,0 +1,67 @@
+<?php
+
+return [
+    'title' => 'Cài đặt hệ thống',
+    'step_of' => 'Bước :step/:total',
+    'steps' => [
+        1 => 'Xác thực',
+        2 => 'Thông tin site',
+        3 => 'Tài khoản quản trị',
+        4 => 'Tuỳ chọn',
+        5 => 'Hoàn tất',
+    ],
+    'url_mismatch' => 'Lưu ý: APP_URL đang là :configured nhưng bạn đang truy cập bằng :actual. Link trong email và đăng nhập Google sẽ trỏ về :configured; hãy sửa APP_URL trong .env nếu sai. Bạn vẫn có thể tiếp tục cài đặt.',
+    'token' => [
+        'intro' => 'Nhập mã cài đặt (INSTALL_TOKEN) do install.sh in ra, hoặc nằm trong file .env trên máy chủ.',
+        'not_configured' => 'Chưa cấu hình mã cài đặt. Hãy chạy install.sh hoặc đặt INSTALL_TOKEN trong .env rồi khởi động lại.',
+        'invalid' => 'Mã cài đặt không đúng.',
+    ],
+    'fields' => [
+        'token' => 'Mã cài đặt',
+        'site_name' => 'Tên site',
+        'default_locale' => 'Ngôn ngữ mặc định',
+        'support_email' => 'Email hỗ trợ',
+        'support_zalo' => 'Zalo hỗ trợ',
+        'support_telegram' => 'Telegram hỗ trợ',
+        'admin_name' => 'Tên hiển thị',
+        'admin_email' => 'Email quản trị',
+        'admin_password' => 'Mật khẩu (tối thiểu 12 ký tự)',
+        'admin_password_confirmation' => 'Nhập lại mật khẩu',
+        'bank_bin' => 'Mã BIN ngân hàng (6 số)',
+        'bank_name' => 'Tên ngân hàng',
+        'account_number' => 'Số tài khoản',
+        'account_name' => 'Tên chủ tài khoản (in hoa không dấu)',
+        'smtp_host' => 'SMTP host',
+        'smtp_port' => 'Cổng',
+        'smtp_encryption' => 'Mã hoá',
+        'smtp_username' => 'Tên đăng nhập',
+        'smtp_password' => 'Mật khẩu',
+        'mail_from_address' => 'Email người gửi',
+    ],
+    'admin' => [
+        'intro' => 'Tài khoản này đăng nhập tại /admin. Lần đầu bạn sẽ được yêu cầu thiết lập xác thực hai bước (MFA).',
+    ],
+    'optional' => [
+        'intro' => 'Có thể bỏ qua và cấu hình sau trong trang quản trị (Cài đặt).',
+        'bank' => 'Ngân hàng nhận tiền nạp',
+        'smtp' => 'Email (SMTP)',
+        'encryption' => [
+            'tls' => 'STARTTLS (cổng 587)',
+            'ssl' => 'SSL/TLS (cổng 465)',
+            'none' => 'Không mã hoá',
+        ],
+    ],
+    'confirm' => [
+        'intro' => 'Kiểm tra lại thông tin rồi bấm Hoàn tất. Sau đó trang cài đặt sẽ bị khoá vĩnh viễn.',
+        'configured' => 'Đã nhập',
+        'skipped' => 'Bỏ qua',
+        'mfa_note' => 'Sau khi hoàn tất bạn được chuyển tới trang đăng nhập quản trị để thiết lập MFA.',
+    ],
+    'actions' => [
+        'continue' => 'Tiếp tục',
+        'next' => 'Tiếp theo',
+        'back' => 'Quay lại',
+        'skip' => 'Bỏ qua',
+        'finish' => 'Hoàn tất cài đặt',
+    ],
+];

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Pest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Container chạy bằng uid của runner để ghi được vendor/ và storage/ trong workspace.
+      COMPOSE_RUN: docker compose -f compose.dev.yml run --rm -e HOME=/tmp -e COMPOSER_HOME=/tmp/composer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Chuẩn bị .env
+        run: cp .env.example .env
+
+      - name: Khởi động Postgres (kèm DB smm_panel_test)
+        run: docker compose -f compose.dev.yml up -d --wait postgres
+
+      - name: Cài dependency và APP_KEY
+        run: |
+          $COMPOSE_RUN --user "$(id -u):$(id -g)" test composer install --no-interaction --prefer-dist --no-progress
+          $COMPOSE_RUN --user "$(id -u):$(id -g)" test php artisan key:generate --no-interaction
+
+      # Nhiều test render view có @vite nên cần manifest; theme admin import CSS từ vendor/filament (đã cài ở bước trên).
+      - name: Build asset Vite
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e npm_config_cache=/tmp/npm \
+            -v "$PWD:/app" -w /app node:22-alpine sh -c "npm ci --no-audit --no-fund && npm run build"
+
+      # Suite Concurrency dùng tiến trình thật nên có thể chập chờn trên runner 2 vCPU: thử lại đúng 1 lần.
+      - name: Chạy test
+        run: |
+          for attempt in 1 2; do
+            if $COMPOSE_RUN --user "$(id -u):$(id -g)" test; then
+              exit 0
+            fi
+            echo "::warning::Lần chạy $attempt thất bại"
+          done
+          exit 1
+
+      - name: Log Postgres khi lỗi
+        if: failure()
+        run: docker compose -f compose.dev.yml logs --tail 100 postgres
+
+  lint:
+    name: Lint (Pint, ShellCheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pint
+        run: |
+          cp .env.example .env
+          run="docker compose -f compose.dev.yml run --rm --no-deps --user $(id -u):$(id -g) -e HOME=/tmp -e COMPOSER_HOME=/tmp/composer test"
+          $run composer install --no-interaction --prefer-dist --no-progress
+          $run vendor/bin/pint --test
+
+      - name: ShellCheck
+        run: find deploy docker tests/shell -name '*.sh' -print0 | xargs -0 shellcheck
+
+      - name: Bundle release khớp install.sh
+        run: tests/shell/bundle-install-contract.sh
+
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

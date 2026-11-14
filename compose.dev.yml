@@ -1,0 +1,52 @@
+# Môi trường dev: Postgres 17 + Mailpit + service test PHP 8.4 (cổng test chính, khớp image prod).
+# Dùng: docker compose -f compose.dev.yml up -d postgres mailpit
+#       docker compose -f compose.dev.yml run --rm test
+name: smm-panel-dev
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: smm
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: smm_panel
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "${DB_PORT:-54317}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smm -d smm_panel"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  test:
+    build:
+      context: .
+      target: cli          # serversideup/php:8.4-cli + intl, giống image production
+    image: smm-panel-test:latest
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: smm_panel_test
+      DB_USERNAME: smm
+      DB_PASSWORD: secret
+    command: ["php", "artisan", "test"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

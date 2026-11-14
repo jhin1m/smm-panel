@@ -1,0 +1,8 @@
+# Cấu hình gitleaks cho CI: giữ toàn bộ rule mặc định, chỉ bỏ qua thư mục test
+# (token/mật khẩu giả dùng làm dữ liệu kiểm thử, không phải secret thật).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Dữ liệu giả trong test"
+paths = ['''(^|/)tests/''']

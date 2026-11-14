@@ -1,0 +1,61 @@
+<?php
+
+// Same key set as lang/vi/validation.php (rules the app uses); parity is enforced by a test.
+return [
+    'accepted' => 'The :attribute field must be accepted.',
+    'array' => 'The :attribute field must be an array.',
+    'between' => [
+        'numeric' => 'The :attribute field must be between :min and :max.',
+        'string' => 'The :attribute field must be between :min and :max characters.',
+    ],
+    'boolean' => 'The :attribute field must be true or false.',
+    'confirmed' => 'The :attribute field confirmation does not match.',
+    'current_password' => 'The password is incorrect.',
+    'date' => 'The :attribute field must be a valid date.',
+    'email' => 'The :attribute field must be a valid email address.',
+    'exists' => 'The selected :attribute is invalid.',
+    'gt' => ['numeric' => 'The :attribute field must be greater than :value.'],
+    'gte' => ['numeric' => 'The :attribute field must be greater than or equal to :value.'],
+    'in' => 'The selected :attribute is invalid.',
+    'integer' => 'The :attribute field must be an integer.',
+    'lt' => ['numeric' => 'The :attribute field must be less than :value.'],
+    'lte' => ['numeric' => 'The :attribute field must be less than or equal to :value.'],
+    'max' => [
+        'numeric' => 'The :attribute field must not be greater than :max.',
+        'string' => 'The :attribute field must not be greater than :max characters.',
+        'array' => 'The :attribute field must not have more than :max items.',
+    ],
+    'min' => [
+        'numeric' => 'The :attribute field must be at least :min.',
+        'string' => 'The :attribute field must be at least :min characters.',
+        'array' => 'The :attribute field must have at least :min items.',
+    ],
+    'not_in' => 'The selected :attribute is invalid.',
+    'numeric' => 'The :attribute field must be a number.',
+    'password' => [
+        'letters' => 'The :attribute field must contain at least one letter.',
+        'mixed' => 'The :attribute field must contain at least one uppercase and one lowercase letter.',
+        'numbers' => 'The :attribute field must contain at least one number.',
+        'symbols' => 'The :attribute field must contain at least one symbol.',
+        'uncompromised' => 'The given :attribute has appeared in a data leak. Please choose a different :attribute.',
+    ],
+    'regex' => 'The :attribute field format is invalid.',
+    'required' => 'The :attribute field is required.',
+    'size' => ['string' => 'The :attribute field must be :size characters.'],
+    'string' => 'The :attribute field must be a string.',
+    'unique' => 'The :attribute has already been taken.',
+    'url' => 'The :attribute field must be a valid http/https URL.',
+
+    'attributes' => [
+        'name' => 'display name',
+        'email' => 'email',
+        'password' => 'password',
+        'link' => 'link',
+        'quantity' => 'quantity',
+        'note' => 'note',
+        'amount' => 'amount',
+        'body' => 'message',
+        'reason' => 'reason',
+        'done' => 'progress',
+    ],
+];

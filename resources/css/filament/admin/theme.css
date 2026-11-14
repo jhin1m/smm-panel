@@ -1,0 +1,22 @@
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+@import '../../fonts.css';
+
+@source '../../../../app/Filament/**/*';
+@source '../../../../resources/views/filament/**/*';
+
+/* Khớp mockup: bo 10px panel / 8px control; màu nền + viền lấy từ bảng gray tuỳ biến ở AdminPanelProvider. */
+@theme {
+    --radius-xl: 10px;
+    --radius-lg: 8px;
+    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.fi-body {
+    background-color: #f2f4f9;
+}
+
+/* Số tiền / mã đơn trong bảng admin dùng mono + tabular-nums. */
+.fi-money,
+.fi-ta-text-item.fi-font-mono {
+    font-variant-numeric: tabular-nums;
+}

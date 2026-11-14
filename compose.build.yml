@@ -1,0 +1,13 @@
+# Override build-từ-source: dùng khi tự build image thay vì kéo image release (instance chạy từ git clone, dev).
+#   docker compose -f compose.yml -f compose.build.yml up -d --build
+# Cần APP_IMAGE=smm-panel:local trong .env (compose.yml bắt buộc có APP_IMAGE; ở đây image bị ghi đè đúng giá trị đó).
+x-build: &build
+  build:
+    context: .
+    target: runtime
+  image: smm-panel:local
+
+services:
+  app: *build
+  queue: *build
+  scheduler: *build
