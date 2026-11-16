@@ -94,7 +94,7 @@ Thử cảnh báo: `BACKUP_DIR=/khong-ghi-duoc /srv/smm-panel/docker/backup/back
 
 Nguồn cập nhật là Release trên GitHub (`jhin1m/smm-panel`); mỗi bản gồm image app + image updater ghim digest và bundle cấu hình (`compose.yml`, `docker/`, `update.sh`) đã kiểm checksum. **Không có `artisan down`**: chỉ trang khách bảo trì tạm (`app:customer-maintenance`), `/admin`, webhook SePay và `/up` vẫn chạy.
 
-**Cách 1: nút trong admin.** `/admin` → Cài đặt → **Cập nhật**: thấy phiên bản đang chạy, bản mới nhất + changelog, trạng thái updater, rồi bấm "Cập nhật lên X". Trang tự làm mới 3 giây/lần, hiện bước đang chạy và lịch sử. Bản `-rc.N` chỉ hiện khi `.env` có `UPDATER_ALLOW_PRERELEASE=true` (chỉ nên bật ở môi trường thử). Nút bị khoá khi updater không phản hồi (heartbeat cũ hơn 60 giây) hoặc đang có lần chạy khác.
+**Cách 1: nút trong admin.** `/admin` → Cài đặt → **Cập nhật**: thấy phiên bản đang chạy, bản mới nhất + changelog, trạng thái updater, rồi bấm "Cập nhật lên X". Trang tự làm mới 3 giây/lần, hiện bước đang chạy và lịch sử. Bản `-rc.N` chỉ hiện khi `.env` có `UPDATER_ALLOW_PRERELEASE=true` (chỉ nên bật ở môi trường thử); sửa `.env` xong chạy `docker compose up -d` để cả `app` lẫn `updater` nhận biến mới. Nút bị khoá khi updater không phản hồi (heartbeat cũ hơn 60 giây) hoặc đang có lần chạy khác.
 
 **Cách 2: `update.sh` trên máy chủ** (dùng khi updater trong web lỗi, hoặc để đổi chính image updater, việc nút admin không tự làm):
 
